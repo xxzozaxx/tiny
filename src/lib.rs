@@ -5,6 +5,7 @@ extern crate alloc_system;
 extern crate ev_loop;
 extern crate libc;
 extern crate net2;
+extern crate openssl;
 extern crate rand;
 extern crate time;
 
@@ -21,8 +22,8 @@ pub mod tui;
 use std::os::unix::io::{RawFd};
 use std::path::PathBuf;
 
-use conn::{Conn, ConnEv};
-use ev_loop::{EvLoop, EvLoopCtrl, READ_EV};
+use conn::{Conn, ConnEv, SslConnectStatus};
+use ev_loop::{EvLoop, EvLoopCtrl, READ_EV, WRITE_EV};
 use logger::Logger;
 use term_input::{Input, Event};
 use tui::tabbed::MsgSource;
@@ -160,16 +161,45 @@ impl Tiny {
                 let conn = Conn::new(serv_addr, serv_name, &self.nick, &self.hostname, &self.realname);
                 let fd = conn.get_raw_fd();
                 self.conns.push(conn);
-                ctrl.add_fd(fd, READ_EV, Box::new(move |_, ctrl, tiny| {
-                    match tiny.find_fd_conn(fd) {
-                        None => {
-                            tiny.logger.get_debug_logs().write_line(
-                                format_args!("BUG: Can't find fd in conns: {:?}", fd));
-                            ctrl.remove_self();
+                ctrl.add_fd(fd, READ_EV | WRITE_EV, Box::new(move |evs, ctrl, tiny| {
+
+                    use std::io;
+                    use std::io::Write;
+                    
+                    if (evs.0 & WRITE_EV.0) != 0 {
+                        writeln!(io::stderr(), "write ev").unwrap();
+                        let conn_idx = tiny.find_fd_conn(fd).unwrap();
+                        match tiny.conns[conn_idx].ssl_connect() {
+                            SslConnectStatus::WantWrite => {
+                                writeln!(io::stderr(), "want write").unwrap();
+                            },
+                            SslConnectStatus::WantRead | SslConnectStatus::JustConnected | SslConnectStatus::AlreadyConnected => {
+                                writeln!(io::stderr(), "want read or connected").unwrap();
+                                ctrl.remove_self_ev(WRITE_EV);
+                            },
                         }
-                        Some(conn_idx) => {
-                            tiny.handle_socket(conn_idx, ctrl);
-                            tiny.tui.draw();
+                    } else {
+                        writeln!(io::stderr(), "read ev").unwrap();
+                        match tiny.find_fd_conn(fd) {
+                            None => {
+                                tiny.logger.get_debug_logs().write_line(
+                                    format_args!("BUG: Can't find fd in conns: {:?}", fd));
+                                ctrl.remove_self();
+                            }
+                            Some(conn_idx) => {
+                                match tiny.conns[conn_idx].ssl_connect() {
+                                    SslConnectStatus::WantWrite => {
+                                        ctrl.add_self_ev(WRITE_EV);
+                                    },
+                                    SslConnectStatus::WantRead | SslConnectStatus::JustConnected => {
+                                        ctrl.remove_self_ev(WRITE_EV);
+                                    },
+                                    SslConnectStatus::AlreadyConnected => {
+                                        tiny.handle_socket(conn_idx, ctrl);
+                                        tiny.tui.draw();
+                                    },
+                                }
+                            }
                         }
                     }
                 }));
@@ -180,7 +210,7 @@ impl Tiny {
     fn join(&mut self, src: MsgSource, chan: &str) {
         match self.find_conn(src.serv_name()) {
             Some(conn) => {
-                wire::join(chan, conn).unwrap();
+                wire::join(chan, conn.write()).unwrap();
                 return;
             }
             None => {
@@ -213,7 +243,7 @@ impl Tiny {
             MsgSource::Chan { serv_name, chan_name } => {
                 {
                     let conn = self.find_conn(&serv_name).unwrap();
-                    wire::privmsg(&chan_name, &msg_string, conn).unwrap();
+                    wire::privmsg(&chan_name, &msg_string, conn.write()).unwrap();
                 }
                 self.tui.add_privmsg(&self.nick, &msg_string,
                                      Timestamp::now(),
@@ -224,7 +254,7 @@ impl Tiny {
             MsgSource::User { serv_name, nick } => {
                 {
                     let conn = self.find_conn(&serv_name).unwrap();
-                    wire::privmsg(&nick, &msg_string, conn).unwrap();
+                    wire::privmsg(&nick, &msg_string, conn.write()).unwrap();
                 }
                 self.tui.add_privmsg(&self.nick, &msg_string,
                                      Timestamp::now(),

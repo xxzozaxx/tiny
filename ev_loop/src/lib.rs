@@ -19,7 +19,8 @@ enum Handler<Ctx> {
 }
 
 /// File descriptor events. Use bitwise or to combine.
-pub struct FdEv(libc::c_short);
+#[derive(Clone, Copy)]
+pub struct FdEv(pub libc::c_short);
 
 pub const READ_EV: FdEv = FdEv(libc::POLLIN);
 pub const WRITE_EV: FdEv = FdEv(libc::POLLOUT);
@@ -68,6 +69,8 @@ pub struct EvLoopCtrl<'a, Ctx: 'a> {
     remove_self: &'a mut bool,
     new_fds: HashMap<libc::c_int, Handler<Ctx>>,
     removed_fds: HashSet<libc::c_int>,
+    added_evs: FdEv,
+    removed_evs: FdEv,
 }
 
 impl<'a, Ctx> EvLoopCtrl<'a, Ctx> {
@@ -77,6 +80,16 @@ impl<'a, Ctx> EvLoopCtrl<'a, Ctx> {
 
     pub fn remove_self(&mut self) {
         *self.remove_self = true;
+    }
+
+    pub fn remove_self_ev(&mut self, ev: FdEv) {
+        self.removed_evs = self.removed_evs | ev;
+        self.added_evs = FdEv(self.added_evs.0 & !ev.0);
+    }
+
+    pub fn add_self_ev(&mut self, ev: FdEv) {
+        self.added_evs = self.added_evs | ev;
+        self.removed_evs = FdEv(self.removed_evs.0 & !ev.0);
     }
 
     pub fn add_fd(&mut self, fd: libc::c_int, evs: FdEv, cb: Box<FnMut(FdEv, &mut EvLoopCtrl<Ctx>, &mut Ctx) -> ()>) {
@@ -171,6 +184,8 @@ impl<Ctx> EvLoop<Ctx> {
                             remove_self: &mut remove_fd,
                             new_fds: HashMap::with_capacity(0),
                             removed_fds: HashSet::with_capacity(0),
+                            added_evs: FdEv(0),
+                            removed_evs: FdEv(0),
                         };
 
                         match self.fds.get_mut(&pollfd.fd).unwrap() {
@@ -200,6 +215,10 @@ impl<Ctx> EvLoop<Ctx> {
 
                         for fd in controller.removed_fds.into_iter() {
                             self.fds.remove(&fd);
+                        }
+
+                        if let Some(&mut Handler::Fd { ref mut evs, .. }) = self.fds.get_mut(&pollfd.fd) {
+                            *evs = FdEv((evs.0 & !(controller.removed_evs.0)) | controller.added_evs.0);
                         }
                     }
 

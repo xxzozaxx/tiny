@@ -8,6 +8,17 @@ use std::net::TcpStream;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::str;
 
+use openssl::ssl;
+use openssl::error::ErrorStack;
+use openssl::ssl::{
+    HandshakeError,
+    MidHandshakeSslStream,
+    SslConnectorBuilder,
+    SslMethod,
+    SslStream,
+    SslContextBuilder,
+};
+
 use logger::Logger;
 use logger::LogFile;
 use wire::{Cmd, Msg};
@@ -24,7 +35,7 @@ pub struct Conn {
     serv_addr: String,
 
     /// The TCP connection to the server.
-    stream: TcpStream,
+    stream: ConnStream,
 
     status: ConnStatus,
 
@@ -32,6 +43,37 @@ pub struct Conn {
 
     /// _Partial_ messages collected here until they make a complete message.
     buf: Vec<u8>,
+}
+
+enum ConnStream {
+    Tcp(TcpStream),
+    TcpSsl(MidHandshakeSslStream<TcpStream>),
+    Ssl(SslStream<TcpStream>),
+}
+
+impl ConnStream {
+    fn write(&mut self) -> &mut Write {
+        match self {
+            &mut ConnStream::Tcp(ref mut  s) => s,
+            &mut ConnStream::TcpSsl(ref mut s) => panic!("write(): In the middle of ssl handshake"),
+            &mut ConnStream::Ssl(ref mut s) => s,
+        }
+    }
+
+    fn read(&mut self) -> &mut Read {
+        match self {
+            &mut ConnStream::Tcp(ref mut  s) => s,
+            &mut ConnStream::TcpSsl(ref mut s) => panic!("read(): In the middle of ssl handshake"),
+            &mut ConnStream::Ssl(ref mut s) => s,
+        }
+    }
+}
+
+pub enum SslConnectStatus {
+    WantWrite,
+    WantRead,
+    JustConnected,
+    AlreadyConnected,
 }
 
 /// How many ticks to wait before sending a ping to the server.
@@ -66,7 +108,8 @@ pub enum ConnEv {
 fn init_stream(serv_addr: &str) -> TcpStream {
     let stream = TcpBuilder::new_v4().unwrap().to_tcp_stream().unwrap();
     stream.set_nonblocking(true).unwrap();
-    // This will fail with EINPROGRESS
+    // This will fail with EINPROGRESS. Socket will be ready for writing when the connection is
+    // established (check POLLOUT).
     let _ = stream.connect(serv_addr);
     stream
 }
@@ -79,27 +122,124 @@ impl Conn {
             realname: realname.to_owned(),
             host: None,
             serv_addr: serv_addr.to_owned(),
-            stream: init_stream(serv_addr),
+            stream: ConnStream::Tcp(init_stream(serv_addr)),
             status: ConnStatus::Introduce,
             serv_name: serv_name.to_owned(),
             buf: vec![],
         }
     }
 
+    pub fn write(&mut self) -> &mut Write {
+        self.stream.write()
+    }
+
+    pub fn read(&mut self) -> &mut Read {
+        self.stream.read()
+    }
+
+    pub fn ssl_connect(&mut self) -> SslConnectStatus {
+        let (new_stream, ret) = {
+            match self.stream {
+                ConnStream::Tcp(ref mut tcp_stream) => {
+                    let mut builder: SslConnectorBuilder = SslConnectorBuilder::new(SslMethod::tls()).unwrap();
+                    {
+                        let ctx: &mut SslContextBuilder = builder.builder_mut();
+                        ctx.set_verify(ssl::SSL_VERIFY_NONE);
+                    }
+                    let connector = builder.build();
+
+                    let old_stream = 
+                        ::std::mem::replace(
+                            tcp_stream,
+                            unsafe { ::std::mem::uninitialized() });
+
+                    match connector.danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication(old_stream) {
+                        Err(HandshakeError::SetupFailure(_)) => {
+                            panic!("ssl connect failed: setup failure");
+                        }
+                        Err(HandshakeError::Failure(mid)) => {
+                            panic!("ssl connect failed: failure ({:?})", mid.error());
+                        }
+                        Err(HandshakeError::Interrupted(mid)) => {
+                            let status = 
+                                match mid.error() {
+                                    &ssl::Error::WantRead(_) =>
+                                        SslConnectStatus::WantRead,
+                                    &ssl::Error::WantWrite(_) =>
+                                        SslConnectStatus::WantWrite,
+                                    ref other =>
+                                        panic!("ssl connect failed: {:?}", other),
+                                };
+
+                            (ConnStream::TcpSsl(mid), status)
+                        }
+                        Ok(ssl_stream) =>
+                            (ConnStream::Ssl(ssl_stream), SslConnectStatus::JustConnected),
+                    }
+                },
+                ConnStream::TcpSsl(ref mut mid) => {
+                    let old_mid = 
+                        ::std::mem::replace(
+                            mid,
+                            unsafe { ::std::mem::uninitialized() });
+
+                    match old_mid.handshake() {
+                        Err(HandshakeError::SetupFailure(_)) => {
+                            panic!("ssl connect failed: setup failure");
+                        }
+                        Err(HandshakeError::Failure(mid)) => {
+                            panic!("ssl connect failed: failure ({:?})", mid.error());
+                        }
+                        Err(HandshakeError::Interrupted(mid)) => {
+                            let status = 
+                                match mid.error() {
+                                    &ssl::Error::WantRead(_) =>
+                                        SslConnectStatus::WantRead,
+                                    &ssl::Error::WantWrite(_) =>
+                                        SslConnectStatus::WantWrite,
+                                    ref other =>
+                                        panic!("ssl connect failed: {:?}", other),
+                                };
+
+                            (ConnStream::TcpSsl(mid), status)
+                        }
+                        Ok(ssl_stream) =>
+                            (ConnStream::Ssl(ssl_stream), SslConnectStatus::JustConnected),
+                    }
+                },
+                ConnStream::Ssl(ref mut ssl_stream) => {
+                    let ssl_stream = 
+                        ::std::mem::replace(
+                            ssl_stream,
+                            unsafe { ::std::mem::uninitialized() });
+
+                    (ConnStream::Ssl(ssl_stream), SslConnectStatus::AlreadyConnected)
+                },
+            }
+        };
+
+        let uninitialized = ::std::mem::replace(&mut self.stream, new_stream);
+        unsafe { ::std::mem::forget(uninitialized); }
+        ret
+    }
+
     pub fn reconnect(&mut self) {
-        self.stream = init_stream(&self.serv_addr);
+        self.stream = ConnStream::Tcp(init_stream(&self.serv_addr));
         self.status = ConnStatus::Introduce;
     }
 
     /// Get the RawFd, to be used with select() or other I/O multiplexer.
     pub fn get_raw_fd(&self) -> RawFd {
-        self.stream.as_raw_fd()
+        match self.stream {
+            ConnStream::Tcp(ref s) => s.as_raw_fd(),
+            ConnStream::TcpSsl(ref s) => s.get_ref().as_raw_fd(),
+            ConnStream::Ssl(ref s) => s.get_ref().as_raw_fd(),
+        }
     }
 
     pub fn get_serv_name(&self) -> &str {
         &self.serv_name
     }
-
 }
 
 impl Conn {
@@ -120,7 +260,7 @@ impl Conn {
                         Some(ref host_) => {
                             debug_out.write_line(
                                 format_args!("{}: Ping timeout, sending PING", self.serv_name));
-                            wire::ping(&mut self.stream, host_).unwrap();;
+                            wire::ping(self.stream.write(), host_).unwrap();;
                         }
                     }
                     self.status = ConnStatus::WaitPong { ticks_passed: 0 };
@@ -150,8 +290,8 @@ impl Conn {
     // Sending messages
 
     fn introduce(&mut self) {
-        wire::user(&self.hostname, &self.realname, &mut self.stream).unwrap();
-        wire::nick(&self.nick, &mut self.stream).unwrap();
+        wire::user(&self.hostname, &self.realname, self.stream.write()).unwrap();
+        wire::nick(&self.nick, self.stream.write()).unwrap();
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -161,7 +301,7 @@ impl Conn {
         let mut read_buf: [u8; 512] = [0; 512];
 
         // Handle disconnects
-        match self.stream.read(&mut read_buf) {
+        match self.read().read(&mut read_buf) {
             Err(err) => {
                 evs.push(ConnEv::Err(err));
             }
@@ -195,7 +335,7 @@ impl Conn {
 
     fn handle_msg(&mut self, msg: Msg, evs: &mut Vec<ConnEv>, logger: &mut Logger) {
         if let &Msg { cmd: Cmd::PING { ref server }, .. } = &msg {
-            wire::pong(server, &mut self.stream).unwrap();
+            wire::pong(server, self.write()).unwrap();
         }
 
         if let ConnStatus::Introduce = self.status {
@@ -244,27 +384,70 @@ fn parse_servername(params: &[String]) -> Option<String> {
     Some((&slice1[..servername_ends]).to_owned())
 }
 
-impl Write for Conn {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.stream.write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.stream.flush()
-    }
-
-    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
-        self.stream.write_all(buf)
-    }
-
-    fn write_fmt(&mut self, fmt: Arguments) -> io::Result<()> {
-        self.stream.write_fmt(fmt)
-    }
-
-    fn by_ref(&mut self) -> &mut Conn {
-        self
-    }
-}
+// impl Read for ConnStream {
+//     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+//         match self {
+//             &mut ConnStream::Tcp(ref mut s) => s.read(buf),
+//             &mut ConnStream::Ssl(ref mut s) => s.read(buf),
+//         }
+//     }
+// }
+// 
+// impl Write for ConnStream {
+//     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+//         match self {
+//             &mut ConnStream::Tcp(ref mut s) => s.write(buf),
+//             &mut ConnStream::Ssl(ref mut s) => s.write(buf),
+//         }
+//     }
+// 
+//     fn flush(&mut self) -> io::Result<()> {
+//         match self {
+//             &mut ConnStream::Tcp(ref mut s) => s.flush(),
+//             &mut ConnStream::Ssl(ref mut s) => s.flush(),
+//         }
+//     }
+// 
+//     fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+//         match self {
+//             &mut ConnStream::Tcp(ref mut s) => s.write_all(buf),
+//             &mut ConnStream::Ssl(ref mut s) => s.write_all(buf),
+//         }
+//     }
+// 
+//     fn write_fmt(&mut self, fmt: Arguments) -> io::Result<()> {
+//         match self {
+//             &mut ConnStream::Tcp(ref mut s) => s.write_fmt(fmt),
+//             &mut ConnStream::Ssl(ref mut s) => s.write_fmt(fmt),
+//         }
+//     }
+// 
+//     fn by_ref(&mut self) -> &mut ConnStream {
+//         self
+//     }
+// }
+// 
+// impl Write for Conn {
+//     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+//         self.stream.write(buf)
+//     }
+// 
+//     fn flush(&mut self) -> io::Result<()> {
+//         self.stream.flush()
+//     }
+// 
+//     fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+//         self.stream.write_all(buf)
+//     }
+// 
+//     fn write_fmt(&mut self, fmt: Arguments) -> io::Result<()> {
+//         self.stream.write_fmt(fmt)
+//     }
+// 
+//     fn by_ref(&mut self) -> &mut Conn {
+//         self
+//     }
+// }
 
 #[cfg(test)]
 mod tests {
