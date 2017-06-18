@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use term_input::Key;
 use termbox_simple::Termbox;
 
@@ -125,6 +128,11 @@ impl Tabbed {
         self.tabs.len()
     }
 
+    pub fn set_nick(&mut self, serv_name: &str, nick: Rc<RefCell<String>>) {
+        self.apply_to_target(&MsgTarget::AllServTabs { serv_name: serv_name },
+                             &|tab, _| tab.widget.set_nick(nick.clone()));
+    }
+
     /// Returns index of the new tab if a new tab is created.
     pub fn new_server_tab(&mut self, serv_name: &str) -> Option<usize> {
         match self.find_serv_tab_idx(&serv_name) {
@@ -170,6 +178,9 @@ impl Tabbed {
                                                    chan_name: chan_name.to_owned() },
                             style: TabStyle::Normal,
                         });
+                        if let Some(nick) = self.tabs[serv_tab_idx].widget.get_nick() {
+                            self.tabs[chan_tab_idx].widget.set_nick(nick);
+                        }
                         if self.active_idx >= chan_tab_idx {
                             self.active_idx += 1;
                         }
@@ -208,6 +219,9 @@ impl Tabbed {
                                                    nick: nick.to_owned() },
                             style: TabStyle::Normal,
                         });
+                        if let Some(nick) = self.tabs[tab_idx - 1].widget.get_nick() {
+                            self.tabs[tab_idx + 1].widget.set_nick(nick);
+                        }
                         Some(tab_idx + 1)
                     }
                 }

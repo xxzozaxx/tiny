@@ -1,5 +1,6 @@
 use net2::TcpBuilder;
 use net2::TcpStreamExt;
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::fmt::Arguments;
 use std::io::Read;
@@ -7,6 +8,7 @@ use std::io::Write;
 use std::io;
 use std::net::TcpStream;
 use std::os::unix::io::{AsRawFd, RawFd};
+use std::rc::Rc;
 use std::str;
 
 use config;
@@ -24,6 +26,7 @@ pub struct Conn {
 
     /// Always in range of `nicks`
     current_nick_idx: usize,
+    current_nick_ref: Rc<RefCell<String>>,
 
     /// Channels to auto-join. Initially empty, every channel we join will be added here to be able
     /// to re-join automatically on reconnect.
@@ -93,6 +96,7 @@ fn init_stream(serv_addr: &str, serv_port: u16) -> TcpStream {
 impl Conn {
     pub fn from_server(server: config::Server) -> Conn {
         let stream = init_stream(&server.addr, server.port);
+        let nick_ref = Rc::new(RefCell::new(server.nicks[0].clone()));
         Conn {
             serv_addr: server.addr,
             serv_port: server.port,
@@ -100,6 +104,7 @@ impl Conn {
             realname: server.realname,
             nicks: server.nicks,
             current_nick_idx: 0,
+            current_nick_ref: nick_ref,
             auto_join: HashSet::new(),
             host: None,
             stream: stream,
@@ -111,6 +116,7 @@ impl Conn {
     /// Clone an existing connection, but update the server address.
     pub fn from_conn(conn: &Conn, new_serv_addr: &str, new_serv_port: u16) -> Conn {
         let stream = init_stream(new_serv_addr, new_serv_port);
+        let nick_ref = Rc::new(RefCell::new(conn.nicks[0].clone()));
         Conn {
             serv_addr: new_serv_addr.to_owned(),
             serv_port: new_serv_port,
@@ -118,6 +124,7 @@ impl Conn {
             realname: conn.realname.clone(),
             nicks: conn.nicks.clone(),
             current_nick_idx: 0,
+            current_nick_ref: nick_ref,
             auto_join: HashSet::new(),
             host: None,
             stream: stream,
@@ -149,8 +156,13 @@ impl Conn {
         &self.nicks[self.current_nick_idx]
     }
 
+    pub fn get_nick_ref(&self) -> Rc<RefCell<String>> {
+        self.current_nick_ref.clone()
+    }
+
     fn reset_nick(&mut self) {
         self.current_nick_idx = 0;
+        self.update_nick_ref();
     }
 
     fn next_nick(&mut self) {
@@ -160,6 +172,13 @@ impl Conn {
             self.nicks.push(new_nick);
         }
         self.current_nick_idx += 1;
+        self.update_nick_ref();
+    }
+
+    fn update_nick_ref(&mut self) {
+        let mut nick_brw = self.current_nick_ref.borrow_mut();
+        nick_brw.clear();
+        nick_brw.push_str(&self.nicks[self.current_nick_idx]);
     }
 }
 

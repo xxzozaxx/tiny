@@ -13,8 +13,10 @@ use mio::PollOpt;
 use mio::Ready;
 use mio::Token;
 use mio::unix::EventedFd;
+use std::cell::RefCell;
 use std::fs::File;
 use std::io::Read;
+use std::rc::Rc;
 
 use term_input::{Input, Event};
 use tiny::tui::{TUI, TUIRet, MsgTarget, Timestamp};
@@ -41,6 +43,7 @@ fn main() {
         }
     }
 
+    tui.set_nick("debug", Rc::new(RefCell::new("test_nick".to_string())));
     tui.draw();
 
     let poll = Poll::new().unwrap();

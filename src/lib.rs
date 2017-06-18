@@ -119,9 +119,16 @@ impl Tiny {
 
         register_fd(&poll, libc::STDIN_FILENO);
 
+        let mut tui = TUI::new();
+
         let mut conns = Vec::with_capacity(servers.len());
         for server in servers.iter().cloned() {
+            let serv_name = server.addr.clone();
+            tui.new_server_tab(&serv_name);
+            tui.add_client_msg("Connecting...",
+                               &MsgTarget::Server { serv_name: &serv_name });
             let conn = Conn::from_server(server);
+            tui.set_nick(&serv_name, conn.get_nick_ref());
             let fd = conn.get_raw_fd();
             register_fd(&poll, fd);
             conns.push(conn);
@@ -131,7 +138,7 @@ impl Tiny {
             conns: conns,
             defaults: defaults,
             servers: servers,
-            tui: TUI::new(),
+            tui: tui,
             input_ev_handler: Input::new(),
             logger: Logger::new(PathBuf::from(log_dir)),
         };
@@ -377,6 +384,7 @@ impl Tiny {
                 }
             }
         };
+        self.tui.set_nick(serv_name, new_conn.get_nick_ref());
         let fd = new_conn.get_raw_fd();
         self.conns.push(new_conn);
         register_fd(poll, fd);

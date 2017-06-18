@@ -6,7 +6,9 @@ pub mod termbox;
 pub mod text_field;
 pub mod widget;
 
+use std::cell::RefCell;
 use std::fs;
+use std::rc::Rc;
 use std::str;
 
 use config;
@@ -147,6 +149,10 @@ impl TUI {
         let w = self.termbox.width();
         let h = self.termbox.height();
         self.ui.resize(w, h);
+    }
+
+    pub fn set_nick(&mut self, serv_name: &str, nick: Rc<RefCell<String>>) {
+        self.ui.set_nick(serv_name, nick);
     }
 
 /*
