@@ -15,6 +15,7 @@ use tui::msg_area::MsgArea;
 use tui::termbox;
 use tui::text_field::TextField;
 use tui::widget::{WidgetRet, Widget};
+use utils;
 
 /// A messaging screen is just a text field to type messages and msg area to
 /// show incoming/sent messages.
@@ -101,8 +102,7 @@ impl MessagingUI {
 
         if let &Some(ref nick) = &self.current_nick {
             if self.draw_current_nick {
-                let nick_color = self.get_nick_color(nick);
-                let style = Style { fg: nick_color as u16, bg: config::USER_MSG.bg };
+                let style = self.get_nick_style(nick);
                 termbox::print_chars(
                     tb,
                     pos_x,
@@ -266,23 +266,32 @@ impl MessagingUI {
         self.add_timestamp(ts);
 
         {
-            let nick_color = self.get_nick_color(sender);
-            let style = Style { fg: nick_color as u16, bg: config::USER_MSG.bg };
+            let style = self.get_nick_style(sender);
             self.msg_area.set_style(style);
             self.msg_area.add_text(sender);
         }
 
-        self.msg_area.set_style(Style { fg: config::USER_MSG.fg | config::TB_BOLD, bg: config::USER_MSG.bg });
+        self.msg_area.set_style(Style {
+            fg: config::USER_MSG.fg | config::TB_BOLD,
+            bg: config::USER_MSG.bg
+        });
         self.msg_area.add_text(": ");
 
-        self.msg_area.set_style(
-            if highlight {
-                config::HIGHLIGHT
-            } else {
-                config::USER_MSG
-            });
+        if highlight {
+            self.msg_area.set_style(config::HIGHLIGHT);
+            self.msg_area.add_text(msg);
+        } else {
+            for split in utils::split_nicks(msg) {
+                let style = if self.nicks.contains(split) {
+                    self.get_nick_style(split)
+                } else {
+                    config::USER_MSG
+                };
+                self.msg_area.set_style(style);
+                self.msg_area.add_text(split);
+            }
+        }
 
-        self.msg_area.add_text(msg);
         self.msg_area.flush_line();
     }
 
@@ -311,6 +320,11 @@ impl MessagingUI {
             hash = hash.wrapping_mul(33).wrapping_add(c as usize);
         }
         config::NICK_COLORS[hash % config::NICK_COLORS.len()]
+    }
+
+    fn get_nick_style(&self, sender: &str) -> config::Style {
+        let nick_color = self.get_nick_color(sender);
+        Style { fg: nick_color as u16, bg: config::USER_MSG.bg }
     }
 }
 

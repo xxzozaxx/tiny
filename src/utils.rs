@@ -78,6 +78,64 @@ pub fn split_whitespace_indices(str: &str) -> SplitWhitespaceIndices {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+pub struct SplitNicks<'a> {
+    str: &'a str,
+}
+
+// forall s . split_nicks(s).join("") == s
+impl<'a> Iterator for SplitNicks<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<&'a str> {
+        let mut cis = self.str.char_indices();
+        match cis.next() {
+            None => None,
+            Some((mut i0, c)) => {
+                if is_nick_char(c) {
+                    while let Some((i, c)) = cis.next() {
+                        if !is_nick_char(c) {
+                            break;
+                        }
+                        i0 = i;
+                    }
+                } else {
+                    while let Some((i, c)) = cis.next() {
+                        if is_nick_char(c) {
+                            break;
+                        }
+                        i0 = i;
+                    }
+                }
+                let ret = &self.str[..i0 + c.len_utf8()];
+                self.str = &self.str[i0 + c.len_utf8() ..];
+                Some(ret)
+            }
+        }
+    }
+}
+
+pub fn split_nicks(str: &str) -> SplitNicks {
+    SplitNicks {
+        str: str,
+    }
+}
+
+pub fn is_nick_char(c: char) -> bool {
+    (c >= 'a' && c <= 'z')
+        || (c >= 'A' && c <= 'Z')
+        || (c >= '0' && c <= '9')
+        || c == '-'
+        || c == '['
+        || c == ']'
+        || c == '\\'
+        || c == '`'
+        || c == '^'
+        || c == '{'
+        || c == '}'
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 #[cfg(test)]
 mod tests {
 
@@ -108,5 +166,25 @@ mod tests {
         let str = "  foo    bar  \n\r   baz     ";
         let idxs: Vec<usize> = split_whitespace_indices(str).into_iter().collect();
         assert_eq!(idxs, vec![2, 9, 19]);
+    }
+
+    #[test]
+    fn split_nicks_test() {
+        let str = "a";
+        let nicks: Vec<&str> = split_nicks(str).into_iter().collect();
+        assert_eq!(nicks, vec!["a"]);
+
+        let str = "foo bar baz";
+        let nicks: Vec<&str> = split_nicks(str).into_iter().collect();
+        assert_eq!(nicks, vec!["foo", " ", "bar", " ", "baz"]);
+
+        let str = "";
+        let nicks: Vec<&str> = split_nicks(str).into_iter().collect();
+        let expected: Vec<&str> = vec![];
+        assert_eq!(nicks, expected);
+
+        let str = "  foo  bar   baz  ";
+        let nicks: Vec<&str> = split_nicks(str).into_iter().collect();
+        assert_eq!(nicks, vec!["  ", "foo", "  ", "bar", "   ", "baz", "  "]);
     }
 }
