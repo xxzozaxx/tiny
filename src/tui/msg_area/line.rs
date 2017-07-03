@@ -59,9 +59,8 @@ pub enum SchemeStyle {
     TabNewMsg, TabHighlight,
 }
 
-// TODO get rid of these
-const TERMBOX_COLOR_PREFIX : char = '\x00';
-const IRC_COLOR_PREFIX     : char = '\x03';
+// TODO get rid of this
+const TERMBOX_COLOR_PREFIX: char = '\x00';
 
 impl Line {
     pub fn new() -> Line {
@@ -314,7 +313,7 @@ fn translate_irc_control_chars(str: &str) -> String {
     }
 
     while let Some(char) = iter.next() {
-        if char == IRC_COLOR_PREFIX {
+        if char == '\x03' {
             match parse_color_code(&mut iter) {
                 None => {
                     // just skip the control char
