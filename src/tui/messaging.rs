@@ -7,6 +7,7 @@ use std::rc::Rc;
 use time::Tm;
 use time;
 
+use config::Colors;
 use config::Style;
 use config;
 use trie::Trie;
@@ -98,15 +99,14 @@ impl MessagingUI {
         self.current_nick.clone()
     }
 
-    pub fn draw(&self, tb: &mut Termbox, pos_x: i32, pos_y: i32) {
-        self.msg_area.draw(tb, pos_x, pos_y);
+    pub fn draw(&self, tb: &mut Termbox, colors: &Colors, pos_x: i32, pos_y: i32) {
+        self.msg_area.draw(tb, colors, pos_x, pos_y);
 
         if let &Some(ref nick) = &self.current_nick {
             if self.draw_current_nick {
                 let nick_color =
-                    config::NICK_COLORS[
-                        self.get_nick_color(nick) % config::NICK_COLORS.len()];
-                let style = Style { fg: nick_color as u16, bg: config::USER_MSG.bg };
+                    colors.nick[self.get_nick_color(nick) % colors.nick.len()];
+                let style = Style { fg: nick_color as u16, bg: colors.user_msg.bg };
                 termbox::print_chars(
                     tb,
                     pos_x,
@@ -117,17 +117,17 @@ impl MessagingUI {
                     pos_x + nick.len() as i32,
                     pos_y + self.height - 1,
                     ':',
-                    config::USER_MSG.fg | config::TB_BOLD,
-                    config::USER_MSG.bg);
+                    colors.user_msg.fg | config::TB_BOLD,
+                    colors.user_msg.bg);
                 self.input_field.draw(
-                    tb,
+                    tb, colors,
                     pos_x + nick.len() as i32 + 2,
                     pos_y + self.height - 1);
             } else {
-                self.input_field.draw(tb, pos_x, pos_y + self.height - 1);
+                self.input_field.draw(tb, colors, pos_x, pos_y + self.height - 1);
             }
         } else {
-            self.input_field.draw(tb, pos_x, pos_y + self.height - 1);
+            self.input_field.draw(tb, colors, pos_x, pos_y + self.height - 1);
         }
     }
 

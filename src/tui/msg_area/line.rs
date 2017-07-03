@@ -3,11 +3,13 @@
 
 use std::ascii::AsciiExt;
 use std::iter::Peekable;
-use std::str::Chars;
 use std::mem;
+use std::str::Chars;
 use termbox_simple::Termbox;
+use termbox_simple;
 
 use config;
+use config::Colors;
 
 /// A single line added to the widget. May be rendered as multiple lines on the
 /// screen.
@@ -163,12 +165,14 @@ impl Line {
         lines
     }
 
-    pub fn draw(&self, tb: &mut Termbox, pos_x: i32, pos_y: i32, width: i32) {
-        self.draw_from(tb, pos_x, pos_y, 0, width);
+    pub fn draw(&self, tb: &mut Termbox, colors: &Colors,
+                pos_x: i32, pos_y: i32, width: i32)
+    {
+        self.draw_from(tb, colors, pos_x, pos_y, 0, width);
     }
 
-    pub fn draw_from(&self, tb: &mut Termbox, pos_x: i32, pos_y: i32,
-                     first_line: i32, width: i32)
+    pub fn draw_from(&self, tb: &mut Termbox, colors: &Colors,
+                     pos_x: i32, pos_y: i32, first_line: i32, width: i32)
     {
         let mut col = pos_x;
         let mut line = 0;
@@ -185,30 +189,29 @@ impl Line {
                         style,
                     SegStyle::Index(idx) =>
                         config::Style {
-                            fg: config::NICK_COLORS[idx % config::NICK_COLORS.len()] as u16,
-                            bg: config::USER_MSG.bg
+                            fg: colors.nick[idx % colors.nick.len()] as u16,
+                            bg: colors.user_msg.bg
                         },
                     SegStyle::SchemeStyle(sty) => {
                         use self::SchemeStyle::*;
-                        use config::*;
                         match sty {
-                            Clear => CLEAR,
-                            UserMsg => USER_MSG,
-                            ErrMsg => ERR_MSG,
-                            Topic => TOPIC,
-                            Cursor => CURSOR,
-                            Join => JOIN,
-                            Part => PART,
-                            Nick => NICK,
-                            Faded => FADED,
-                            ExitDialogue => EXIT_DIALOGUE,
-                            Highlight => HIGHLIGHT,
-                            Completion => COMPLETION,
-                            Timestamp => TIMESTAMP,
-                            TabActive => TAB_ACTIVE,
-                            TabNormal => TAB_NORMAL,
-                            TabNewMsg => TAB_NEW_MSG,
-                            TabHighlight => TAB_HIGHLIGHT,
+                            Clear => colors.clear,
+                            UserMsg => colors.user_msg,
+                            ErrMsg => colors.err_msg,
+                            Topic => colors.topic,
+                            Cursor => colors.cursor,
+                            Join => colors.join,
+                            Part => colors.part,
+                            Nick => colors.nick_change,
+                            Faded => colors.faded,
+                            ExitDialogue => colors.exit_dialogue,
+                            Highlight => colors.highlight,
+                            Completion => colors.completion,
+                            Timestamp => colors.timestamp,
+                            TabActive => colors.tab_active,
+                            TabNormal => colors.tab_normal,
+                            TabNewMsg => colors.tab_new_msg,
+                            TabHighlight => colors.tab_highlight,
                         }
                     }
                 }
@@ -309,7 +312,8 @@ fn translate_irc_control_chars(str: &str) -> String {
         ret.push(TERMBOX_COLOR_PREFIX);
         ret.push(0 as char); // style
         ret.push(irc_color_to_termbox(irc_fg) as char);
-        ret.push(irc_color_to_termbox(irc_bg.unwrap_or(config::USER_MSG.bg as u8)) as char);
+        ret.push(irc_color_to_termbox(irc_bg.unwrap_or(
+                    termbox_simple::TB_DEFAULT as u8)) as char);
     }
 
     while let Some(char) = iter.next() {

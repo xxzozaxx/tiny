@@ -18,6 +18,7 @@ use std::io::Read;
 use term_input::{Input, Event, Key};
 use termbox_simple::*;
 
+use tiny::config;
 use tiny::tui::msg_area::MsgArea;
 use tiny::tui::msg_area::line::SchemeStyle;
 use tiny::tui::msg_area::line::SegStyle;
@@ -26,6 +27,8 @@ fn main() {
     let mut tui = Termbox::init().unwrap();
     tui.set_output_mode(OutputMode::Output256);
     tui.set_clear_attributes(0, 0);
+
+    let colors = config::default_colors();
 
     let mut msg_area = MsgArea::new(tui.width(), tui.height());
 
@@ -57,7 +60,7 @@ fn main() {
         PollOpt::level()).unwrap();
 
     tui.clear();
-    msg_area.draw(&mut tui, 0, 0);
+    msg_area.draw(&mut tui, &colors, 0, 0);
     tui.present();
 
     let mut ev_buffer: Vec<Event> = Vec::new();
@@ -71,7 +74,7 @@ fn main() {
                 msg_area.resize(tui.width(), tui.height());
 
                 tui.clear();
-                msg_area.draw(&mut tui, 0, 0);
+                msg_area.draw(&mut tui, &colors, 0, 0);
                 tui.present();
             }
             Ok(_) => {
@@ -112,7 +115,7 @@ fn main() {
                 }
 
                 tui.clear();
-                msg_area.draw(&mut tui, 0, 0);
+                msg_area.draw(&mut tui, &colors, 0, 0);
                 tui.present();
             }
         }
