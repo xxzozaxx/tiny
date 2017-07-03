@@ -11,6 +11,8 @@ use config::Style;
 use config;
 use trie::Trie;
 use tui::exit_dialogue::ExitDialogue;
+use tui::msg_area::line::SchemeStyle;
+use tui::msg_area::line::SegStyle;
 use tui::msg_area::MsgArea;
 use tui::termbox;
 use tui::text_field::TextField;
@@ -54,7 +56,7 @@ impl Timestamp {
     }
 
     fn stamp(&self, msg_area: &mut MsgArea) {
-        msg_area.set_style(config::TIMESTAMP);
+        msg_area.set_style(SegStyle::SchemeStyle(SchemeStyle::Timestamp));
         msg_area.add_text(&format!("{:02}:{:02} ", self.hour, self.min));
     }
 }
@@ -101,7 +103,9 @@ impl MessagingUI {
 
         if let &Some(ref nick) = &self.current_nick {
             if self.draw_current_nick {
-                let nick_color = self.get_nick_color(nick);
+                let nick_color =
+                    config::NICK_COLORS[
+                        self.get_nick_color(nick) % config::NICK_COLORS.len()];
                 let style = Style { fg: nick_color as u16, bg: config::USER_MSG.bg };
                 termbox::print_chars(
                     tb,
@@ -248,7 +252,7 @@ impl MessagingUI {
     pub fn show_topic(&mut self, topic: &str, ts: Timestamp) {
         self.add_timestamp(ts);
 
-        self.msg_area.set_style(config::TOPIC);
+        self.msg_area.set_style(SegStyle::SchemeStyle(SchemeStyle::Topic));
         self.msg_area.add_text(topic);
 
         self.msg_area.flush_line();
@@ -257,7 +261,7 @@ impl MessagingUI {
     pub fn add_client_err_msg(&mut self, msg : &str) {
         self.reset_activity_line();
 
-        self.msg_area.set_style(config::ERR_MSG);
+        self.msg_area.set_style(SegStyle::SchemeStyle(SchemeStyle::ErrMsg));
         self.msg_area.add_text(msg);
         self.msg_area.flush_line();
     }
@@ -265,7 +269,7 @@ impl MessagingUI {
     pub fn add_client_msg(&mut self, msg : &str) {
         self.reset_activity_line();
 
-        self.msg_area.set_style(config::USER_MSG);
+        self.msg_area.set_style(SegStyle::SchemeStyle(SchemeStyle::UserMsg));
         self.msg_area.add_text(msg);
         self.msg_area.flush_line();
         self.reset_activity_line();
@@ -277,20 +281,20 @@ impl MessagingUI {
 
         {
             let nick_color = self.get_nick_color(sender);
-            let style = Style { fg: nick_color as u16, bg: config::USER_MSG.bg };
+            let style = SegStyle::Index(nick_color);
             self.msg_area.set_style(style);
             self.msg_area.add_text(sender);
         }
 
-        self.msg_area.set_style(Style { fg: config::USER_MSG.fg | config::TB_BOLD, bg: config::USER_MSG.bg });
+        self.msg_area.set_style(SegStyle::SchemeStyle(SchemeStyle::UserMsg));
         self.msg_area.add_text(": ");
 
-        self.msg_area.set_style(
+        self.msg_area.set_style(SegStyle::SchemeStyle(
             if highlight {
-                config::HIGHLIGHT
+                SchemeStyle::Highlight
             } else {
-                config::USER_MSG
-            });
+                SchemeStyle::UserMsg
+            }));
 
         self.msg_area.add_text(msg);
         self.msg_area.flush_line();
@@ -300,7 +304,7 @@ impl MessagingUI {
         self.reset_activity_line();
 
         self.add_timestamp(ts);
-        self.msg_area.set_style(config::USER_MSG);
+        self.msg_area.set_style(SegStyle::SchemeStyle(SchemeStyle::UserMsg));
         self.msg_area.add_text(msg);
         self.msg_area.flush_line();
     }
@@ -309,18 +313,18 @@ impl MessagingUI {
         self.reset_activity_line();
 
         self.add_timestamp(ts);
-        self.msg_area.set_style(config::ERR_MSG);
+        self.msg_area.set_style(SegStyle::SchemeStyle(SchemeStyle::ErrMsg));
         self.msg_area.add_text(msg);
         self.msg_area.flush_line();
     }
 
-    fn get_nick_color(&self, sender: &str) -> u8 {
+    fn get_nick_color(&self, sender: &str) -> usize {
         // Anything works as long as it's fast
         let mut hash: usize = 5381;
         for c in sender.chars() {
             hash = hash.wrapping_mul(33).wrapping_add(c as usize);
         }
-        config::NICK_COLORS[hash % config::NICK_COLORS.len()]
+        hash
     }
 }
 
@@ -334,9 +338,9 @@ impl MessagingUI {
         if let Some(ts) = ts {
             let line_idx = self.get_activity_line_idx(ts);
             self.msg_area.modify_line(line_idx, |line| {
-                line.set_style(config::JOIN);
+                line.set_style(SegStyle::SchemeStyle(SchemeStyle::Join));
                 line.add_char('+');
-                line.set_style(config::FADED);
+                line.set_style(SegStyle::SchemeStyle(SchemeStyle::Faded));
                 line.add_text(nick);
                 line.add_char(' ');
             });
@@ -349,9 +353,9 @@ impl MessagingUI {
         if let Some(ts) = ts {
             let line_idx = self.get_activity_line_idx(ts);
             self.msg_area.modify_line(line_idx, |line| {
-                line.set_style(config::PART);
+                line.set_style(SegStyle::SchemeStyle(SchemeStyle::Part));
                 line.add_char('-');
-                line.set_style(config::FADED);
+                line.set_style(SegStyle::SchemeStyle(SchemeStyle::Faded));
                 line.add_text(nick);
                 line.add_char(' ');
             });
@@ -364,11 +368,11 @@ impl MessagingUI {
 
         let line_idx = self.get_activity_line_idx(ts);
         self.msg_area.modify_line(line_idx, |line| {
-            line.set_style(config::FADED);
+            line.set_style(SegStyle::SchemeStyle(SchemeStyle::Faded));
             line.add_text(old_nick);
-            line.set_style(config::NICK);
+            line.set_style(SegStyle::SchemeStyle(SchemeStyle::Nick));
             line.add_text(">");
-            line.set_style(config::FADED);
+            line.set_style(SegStyle::SchemeStyle(SchemeStyle::Faded));
             line.add_text(new_nick);
             line.add_char(' ');
         });

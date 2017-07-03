@@ -38,8 +38,8 @@ struct Seg {
     style: SegStyle,
 }
 
-#[derive(Debug)]
-enum SegStyle {
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+pub enum SegStyle {
     /// A specific style. Useful when rendering IRC colors (which should look
     /// the same across color schemes).
     Fixed(config::Style),
@@ -52,7 +52,7 @@ enum SegStyle {
     SchemeStyle(SchemeStyle),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum SchemeStyle {
     Clear, UserMsg, ErrMsg, Topic, Cursor, Join, Part, Nick, Faded,
     ExitDialogue, Highlight, Completion, Timestamp, TabActive, TabNormal,
@@ -76,14 +76,14 @@ impl Line {
         }
     }
 
-    pub fn set_style(&mut self, style: config::Style) {
+    pub fn set_style(&mut self, style: SegStyle) {
         // Just update the last segment if it's empty
         if self.current_seg.text.is_empty() {
-            self.current_seg.style = SegStyle::Fixed(style);
-        } else {
+            self.current_seg.style = style;
+        } else if self.current_seg.style != style {
             let seg = mem::replace(&mut self.current_seg, Seg {
                 text: String::new(),
-                style: SegStyle::Fixed(style),
+                style: style,
             });
             self.segs.push(seg);
         }
@@ -105,7 +105,7 @@ impl Line {
                     fg: fg,
                     bg: bg,
                 };
-                self.set_style(style);
+                self.set_style(SegStyle::Fixed(style));
             }
 
             else if char > '\x08' {
@@ -180,10 +180,38 @@ impl Line {
 
         let last_seg: [&Seg; 1] = [&self.current_seg];
         for seg in self.segs.iter().chain(last_seg.into_iter().map(|s| *s)) {
-            let (fg, bg): (u16, u16) = {
+            let sty: config::Style = {
                 match seg.style {
-                    SegStyle::Fixed(style) => (style.fg, style.bg),
-                    _ => unimplemented!(),
+                    SegStyle::Fixed(style) =>
+                        style,
+                    SegStyle::Index(idx) =>
+                        config::Style {
+                            fg: config::NICK_COLORS[idx % config::NICK_COLORS.len()] as u16,
+                            bg: config::USER_MSG.bg
+                        },
+                    SegStyle::SchemeStyle(sty) => {
+                        use self::SchemeStyle::*;
+                        use config::*;
+                        match sty {
+                            Clear => CLEAR,
+                            UserMsg => USER_MSG,
+                            ErrMsg => ERR_MSG,
+                            Topic => TOPIC,
+                            Cursor => CURSOR,
+                            Join => JOIN,
+                            Part => PART,
+                            Nick => NICK,
+                            Faded => FADED,
+                            ExitDialogue => EXIT_DIALOGUE,
+                            Highlight => HIGHLIGHT,
+                            Completion => COMPLETION,
+                            Timestamp => TIMESTAMP,
+                            TabActive => TAB_ACTIVE,
+                            TabNormal => TAB_NORMAL,
+                            TabNewMsg => TAB_NEW_MSG,
+                            TabHighlight => TAB_HIGHLIGHT,
+                        }
+                    }
                 }
             };
 
@@ -211,7 +239,7 @@ impl Line {
                     if (chars_until_next_split as i32) <= slots_in_line {
                         // keep rendering chars
                         if line >= first_line {
-                            tb.change_cell(col, pos_y + line, char, fg, bg);
+                            tb.change_cell(col, pos_y + line, char, sty.fg, sty.bg);
                         }
                         col += 1;
                     } else {
@@ -226,7 +254,7 @@ impl Line {
                     // of bounds.
                     if col - pos_x < width {
                         if line >= first_line {
-                            tb.change_cell(col, pos_y + line, char, fg, bg);
+                            tb.change_cell(col, pos_y + line, char, sty.fg, sty.bg);
                         }
                         col += 1;
                     }

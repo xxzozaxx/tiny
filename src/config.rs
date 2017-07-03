@@ -85,7 +85,7 @@ pub static NICK_COLORS: [u8; 13] =
 
 pub use termbox_simple::*;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Style {
     /// Termbox fg.
     pub fg: u16,
