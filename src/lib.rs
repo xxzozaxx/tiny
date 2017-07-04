@@ -7,6 +7,7 @@ extern crate alloc_system;
 extern crate libc;
 extern crate mio;
 extern crate net2;
+extern crate notify_rust;
 extern crate time;
 extern crate serde;
 extern crate serde_yaml;
@@ -31,6 +32,7 @@ use mio::PollOpt;
 use mio::Ready;
 use mio::Token;
 use mio::unix::EventedFd;
+use notify_rust::Notification;
 use std::ascii::AsciiExt;
 use std::error::Error;
 use std::fs::File;
@@ -44,6 +46,7 @@ use std::time::Instant;
 
 use conn::{Conn, ConnEv};
 use logger::Logger;
+use term_input::Event;
 use term_input::Input;
 use tui::tabbed::MsgSource;
 use tui::tabbed::TabStyle;
@@ -98,6 +101,7 @@ struct Tiny {
     tui: TUI,
     input_ev_handler: Input,
     logger: Logger,
+    focus: bool,
 }
 
 static STDIN_TOKEN: Token = Token(libc::STDIN_FILENO as usize);
@@ -135,6 +139,7 @@ impl Tiny {
             tui: TUI::new(config::default_colors()),
             input_ev_handler: Input::new(),
             logger: Logger::new(PathBuf::from(log_dir)),
+            focus: true,
         };
 
         tiny.init_mentions_tab();
@@ -202,6 +207,11 @@ impl Tiny {
         let mut abort = false;
         self.input_ev_handler.read_input_events(&mut ev_buffer);
         for ev in ev_buffer.drain(..) {
+            if let Event::FocusGained = ev {
+                self.focus = true;
+            } else if let Event::FocusLost = ev {
+                self.focus = false;
+            }
             match self.tui.handle_input_event(ev) {
                 TUIRet::Abort => {
                     abort = true;
@@ -579,12 +589,15 @@ impl Tiny {
                             self.tui.add_privmsg_higlight(origin, &msg, ts, &msg_target);
                             self.tui.set_tab_style(TabStyle::Highlight, &msg_target);
                             let mentions_target = MsgTarget::Server { serv_name: "mentions" };
-                            self.tui.add_msg(
-                                &format!("{} in {}:{}: {}",
-                                         origin, conn.get_serv_name(), chan, msg),
-                                ts,
-                                &mentions_target);
+                            {
+                                let msg = format!("{} in {}:{}: {}", origin, conn.get_serv_name(), chan, msg);
+                                self.tui.add_msg(&msg, ts, &mentions_target);
+                            }
                             self.tui.set_tab_style(TabStyle::Highlight, &mentions_target);
+                            if !self.focus {
+                                let msg = format!("{} in {}:{}:\n{}", origin, conn.get_serv_name(), chan, msg);
+                                let _ = Notification::new().summary("New mention").body(&msg).show();
+                            }
                         } else {
                             self.tui.add_privmsg(origin, &msg, ts, &msg_target);
                             self.tui.set_tab_style(TabStyle::NewMsg, &msg_target);
@@ -603,6 +616,10 @@ impl Tiny {
                         self.tui.add_privmsg(origin, &msg, ts, &msg_target);
                         if target == conn.get_nick() {
                             self.tui.set_tab_style(TabStyle::Highlight, &msg_target);
+                            if !self.focus {
+                                let msg = format!("{}: {}", origin, &msg);
+                                let _ = Notification::new().summary("New privmsg").body(&msg).show();
+                            }
                         } else {
                             // not sure if this case can happen
                             self.tui.set_tab_style(TabStyle::NewMsg, &msg_target);
