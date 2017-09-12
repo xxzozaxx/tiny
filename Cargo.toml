@@ -23,13 +23,18 @@ path = "bin/main.rs"
 [dependencies]
 libc = "0.2.22"
 mio = "0.6.9"
+native-tls = "0.1.4"
 net2 = "0.2.23"
 serde = "1.0.8"
 serde_derive = "1.0.8"
 serde_yaml = "0.7.1"
+slack = { path = "/home/omer/rust/slack-rs" }
+slack_api = "0.17.0"
 term_input = "0.1.1"
 termbox_simple = "0.2.0"
 time = "0.1"
+tungstenite = "0.4.0"
+url = "1.5"
 
 [dev-dependencies]
 quickcheck = "0.3"

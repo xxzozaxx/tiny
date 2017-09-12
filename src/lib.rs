@@ -7,23 +7,30 @@
 #[cfg(test)]
 extern crate quickcheck;
 
+#[macro_use]
+extern crate serde_derive;
+
 extern crate alloc_system;
 extern crate libc;
 extern crate mio;
+extern crate native_tls;
 extern crate net2;
-extern crate time;
 extern crate serde;
 extern crate serde_yaml;
-#[macro_use] extern crate serde_derive;
-
+extern crate slack;
+extern crate slack_api;
 extern crate term_input;
 extern crate termbox_simple;
+extern crate time;
+extern crate tungstenite;
+extern crate url;
 
 #[macro_use]
 mod utils;
 
 mod conn;
 mod logger;
+mod slack_conn;
 mod wire;
 pub mod config;
 pub mod trie;
