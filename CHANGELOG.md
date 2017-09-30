@@ -1,5 +1,13 @@
 # WIP
 
+- `/clear` command implement for clearing tab contents (#22).
+
+# 2017/09/19: 0.2.4
+
+- tiny can now connect to IPv6 servers.
+
+# 2017/09/18: 0.2.3
+
 - Channel name list is now reset on `RPL_NAMREPLY`. This fixes #23.
 - A bug that caused "highlight" state of tabs fixed.
   (new messages in channel tabs no longer cause a tab in "highlight" state to
