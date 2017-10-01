@@ -21,6 +21,7 @@ name = "tiny"
 path = "bin/main.rs"
 
 [dependencies]
+futures = "0.1.16"
 libc = "0.2.22"
 mio = "0.6.9"
 native-tls = "0.1.4"
@@ -29,12 +30,18 @@ serde = "1.0.8"
 serde_derive = "1.0.8"
 serde_yaml = "0.7.1"
 slack = { path = "/home/omer/rust/slack-rs" }
-slack_api = "0.17.0"
+slack_api = { path = "/home/omer/rust/slack-rs-api" }
 term_input = "0.1.2"
 termbox_simple = "0.2.0"
 time = "0.1"
+tokio-core = "0.1.9"
 tungstenite = "0.4.0"
 url = "1.5"
+
+[dependencies.reqwest]
+git = "https://github.com/seanmonstar/reqwest"
+rev = "a646bb56deccf7004d7069e5b13bbbf8042598d7"
+features = ["unstable"]
 
 [dev-dependencies]
 quickcheck = "0.3"

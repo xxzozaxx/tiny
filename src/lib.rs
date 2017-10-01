@@ -11,10 +11,12 @@ extern crate quickcheck;
 extern crate serde_derive;
 
 extern crate alloc_system;
+extern crate futures;
 extern crate libc;
 extern crate mio;
 extern crate native_tls;
 extern crate net2;
+extern crate reqwest;
 extern crate serde;
 extern crate serde_yaml;
 extern crate slack;
@@ -22,6 +24,7 @@ extern crate slack_api;
 extern crate term_input;
 extern crate termbox_simple;
 extern crate time;
+extern crate tokio_core;
 extern crate tungstenite;
 extern crate url;
 
@@ -122,6 +125,10 @@ impl<'poll> Tiny<'poll> {
                log_dir: String,
                colors: config::Colors)
     {
+        slack_conn::SlackConn::new();
+
+
+        /*
         let poll = Poll::new().unwrap();
 
         poll.register(
@@ -198,6 +205,7 @@ impl<'poll> Tiny<'poll> {
 
             tiny.tui.draw();
         }
+    */
     }
 
     fn init_mentions_tab(&mut self) {
