@@ -13,18 +13,22 @@ use std::collections::HashMap;
 use std::net::{TcpStream, SocketAddr, ToSocketAddrs};
 use std::os::unix::io::AsRawFd;
 use std;
-use tungstenite::protocol::WebSocket;
-use tungstenite;
 use url::Url;
 
 use futures::future::Executor;
+
 use futures::future::Future;
+use futures::sink::Sink;
+use futures::stream::Stream;
+use futures::future;
 use reqwest::unstable::async as reqwest;
 use tokio_core::io::{read_to_end, write_all};
 use tokio_core::reactor::Core;
 
-use std::sync::{Arc, Mutex};
+use websocket::{ClientBuilder, OwnedMessage};
+use websocket::result::WebSocketError;
 
+use std::sync::{Arc, Mutex};
 
 pub struct SlackConn {
     api_tok: String,
@@ -33,7 +37,7 @@ pub struct SlackConn {
     http_client: SlackHTTPClient,
 
     /// Websocket connection to the slack server
-    ws: WebSocket<TlsStream<TcpStream>>,
+    // ws: WebSocket<TlsStream<TcpStream>>,
 
     /// Channel id -> channel name map
     chans: HashMap<String, String>,
@@ -78,41 +82,106 @@ impl SlackConn {
         println!("spawned users future");
 
         println!("asking for RTM url");
-        let poll = Arc::new(Mutex::new(Poll::new().unwrap()));
 
+        let handle_clone = handle.clone();
         let rtm_future = slack_api::rtm::start_async(
             &client,
             &api_tok,
             &Default::default())
             .map_err(|e| println!("error: {:?}", e))
-            .map(|r| {
+            .and_then(move |r| {
                 let url = r.url.unwrap();
-                let url = Url::parse(&url).unwrap();
-                let domain = url.host_str().unwrap();
+                println!("got rtm url: {}", url);
+                // let url = Url::parse(&url).unwrap();
+                ClientBuilder::new(&url)
+                    .unwrap()
+                    .async_connect(None, &handle_clone)
+                    .map_err(|e| println!("error: {:?}", e))
+                    .and_then(|(duplex, _)| {
+                        future::loop_fn(duplex, |stream| {
+                            // println!("breaking the loop");
+                            // future::ok(future::Loop::Break(())).boxed()
 
-                println!("url: {:?}, domain: {:?}", url, domain);
 
-                let addrs = url.to_socket_addrs().unwrap();
-                let stream = connect_to_some(addrs, &url);
+					stream.into_future()
+					      .or_else(|(err, stream)| {
+						               println!("Could not receive message: {:?}", err);
+						               stream.send(OwnedMessage::Close(None)).map(|s| (None, s))
+						              })
+					      .and_then(|(msg, stream)| {
+                              println!("msg: {:?}", msg);
+                                    match msg {
+					                    Some(OwnedMessage::Text(txt)) => {
+						                    stream.send(OwnedMessage::Text(txt))
+					                              .map(|s| future::Loop::Continue(s))
+					                              .boxed()
+					                    }
+					                    Some(OwnedMessage::Binary(bin)) => {
+						                    stream.send(OwnedMessage::Binary(bin))
+					                              .map(|s| future::Loop::Continue(s))
+					                              .boxed()
+					                    }
+					                    Some(OwnedMessage::Ping(data)) => {
+						                    stream.send(OwnedMessage::Pong(data))
+					                              .map(|s| future::Loop::Continue(s))
+					                              .boxed()
+					                    }
+					                    Some(OwnedMessage::Close(_)) => {
+						                    stream.send(OwnedMessage::Close(None))
+					                              .map(|_| future::Loop::Break(()))
+					                              .boxed()
+					                    }
+					                    Some(OwnedMessage::Pong(_)) => {
+						                    future::ok(future::Loop::Continue(stream)).boxed()
+					                    }
+					                    None => future::ok(future::Loop::Break(())).boxed(),
+					                }
+                          })
 
-                let ws: WebSocket<TlsStream<TcpStream>> =
-                    tungstenite::client(tungstenite::handshake::client::Request::from(url.clone()), stream).unwrap().0;
 
-                //poll.lock().unwrap().register(
-                //    &EventedFd(&ws.get_ref().get_ref().as_raw_fd()),
-                //    Token(ws.get_ref().get_ref().as_raw_fd() as usize),
-                //    Ready::readable() | Ready::writable(),
-                //    PollOpt::edge()).unwrap();
-                ws
+
+                            // stream.into_future()
+                            //     .or_else(|(err, stream)| {
+                            //         println!("Could not receive message: {:?}", err);
+                            //         stream.send(OwnedMessage::Close(None)).map(|s| (None, s))
+                            //     })
+                            // .and_then(|(msg, stream)| match msg {
+                            //     Some(OwnedMessage::Text(txt)) => {
+                            //         stream.send(OwnedMessage::Text(txt))
+                            //             .map(|s| Loop::Continue(s))
+                            //             .boxed()
+                            //     }
+                            //     Some(OwnedMessage::Binary(bin)) => {
+                            //         stream.send(OwnedMessage::Binary(bin))
+                            //             .map(|s| Loop::Continue(s))
+                            //             .boxed()
+                            //     }
+                            //     Some(OwnedMessage::Ping(data)) => {
+                            //         stream.send(OwnedMessage::Pong(data))
+                            //             .map(|s| Loop::Continue(s))
+                            //             .boxed()
+                            //     }
+                            //     Some(OwnedMessage::Close(_)) => {
+                            //         stream.send(OwnedMessage::Close(None))
+                            //             .map(|_| Loop::Break(()))
+                            //             .boxed()
+                            //     }
+                            //     Some(OwnedMessage::Pong(_)) => {
+                            //         future::ok(Loop::Continue(stream)).boxed()
+                            //     }
+                            //     None => future::ok(Loop::Break(())).boxed(),
+                            // })
+                        })
+                .map_err(|_| ())
+                    })
+                .map_err(|_| ())
+
             });
 
-        println!("waiting for RTM response");
-        match core.run(rtm_future) {
-            Err(()) => {},
-            Ok(_) => {
-                println!("got response");
-            }
-        }
+        handle.execute(rtm_future);
+
+        loop { core.turn(None) }
+        
 
         // println!("creating event loop");
 
@@ -156,7 +225,6 @@ impl SlackConn {
         });
 
         println!("running tokio core in the main thread");
-        loop { core.turn(None) }
 */
 
 

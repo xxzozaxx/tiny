@@ -25,8 +25,8 @@ extern crate term_input;
 extern crate termbox_simple;
 extern crate time;
 extern crate tokio_core;
-extern crate tungstenite;
 extern crate url;
+extern crate websocket;
 
 #[macro_use]
 mod utils;
