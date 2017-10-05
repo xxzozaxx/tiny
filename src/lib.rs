@@ -1,4 +1,6 @@
+#![feature(conservative_impl_trait)]
 #![cfg_attr(test, feature(test))]
+#![feature(fnbox)]
 #![feature(alloc_system)]
 #![feature(ascii_ctype)]
 #![feature(offset_to)]
@@ -10,6 +12,9 @@ extern crate quickcheck;
 #[macro_use]
 extern crate serde_derive;
 
+#[macro_use]
+extern crate quick_error;
+
 extern crate alloc_system;
 extern crate futures;
 extern crate libc;
@@ -18,6 +23,7 @@ extern crate native_tls;
 extern crate net2;
 extern crate reqwest;
 extern crate serde;
+extern crate serde_json;
 extern crate serde_yaml;
 extern crate slack;
 extern crate slack_api;
@@ -44,6 +50,7 @@ use mio::Poll;
 use mio::PollOpt;
 use mio::Ready;
 use mio::Token;
+use std::sync::Mutex;
 use mio::unix::EventedFd;
 use mio::unix::UnixReady;
 use std::ascii::AsciiExt;
@@ -52,13 +59,15 @@ use std::fs::File;
 use std::io::Read;
 use std::io::Write;
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
+use futures::sync::mpsc::channel;
 
+use config::Colors;
 use conn::{Conn, ConnEv};
 use logger::Logger;
-use term_input::Input;
+use term_input::{Input, Event};
 use tui::tabbed::MsgSource;
 use tui::tabbed::TabStyle;
 use tui::{TUI, TUIRet, MsgTarget, Timestamp};
@@ -125,10 +134,11 @@ impl<'poll> Tiny<'poll> {
                log_dir: String,
                colors: config::Colors)
     {
-        slack_conn::SlackConn::new();
+        let tui = Arc::new(Mutex::new(TUI::new(Colors::default())));
 
+        let (send_in, recv_in) = channel(100);
+        let _ = std::thread::spawn(slack_conn::main(tui.clone(), recv_in));
 
-        /*
         let poll = Poll::new().unwrap();
 
         poll.register(
@@ -137,75 +147,48 @@ impl<'poll> Tiny<'poll> {
             Ready::readable(),
             PollOpt::level()).unwrap();
 
-        let mut conns = Vec::with_capacity(servers.len());
-        for server in servers.iter().cloned() {
-            let conn = Conn::from_server(server, &poll);
-            conns.push(conn);
-        }
+        let chan_target = MsgTarget::Chan { serv_name: "debug", chan_name: "chan" };
+        tui.lock().unwrap().new_server_tab("debug");
+        tui.lock().unwrap().new_chan_tab("debug", "chan");
+        tui.lock().unwrap().show_topic("This is channel topic", Timestamp::now(), &chan_target);
+        tui.lock().unwrap().draw();
 
-        let mut tiny = Tiny {
-            conns: conns,
-            defaults: defaults,
-            servers: servers,
-            tui: TUI::new(colors),
-            input_ev_handler: Input::new(),
-            logger: Logger::new(PathBuf::from(log_dir)),
-        };
+        tui.lock().unwrap().set_nick("debug", Arc::new("some_long_nick_name____".to_owned()));
+        tui.lock().unwrap().draw();
 
-        tiny.init_mentions_tab();
-        tiny.tui.draw();
-
-        let mut last_tick = Instant::now();
+        let mut input = Input::new();
+        let mut ev_buffer: Vec<Event> = Vec::new();
         let mut events = Events::with_capacity(10);
         'mainloop:
-        loop {
-            // FIXME this will sometimes miss the tick deadline
-            match poll.poll(&mut events, Some(Duration::from_secs(1))) {
-                Err(_) => {
-                    // usually SIGWINCH, which is caught by term_input
-                    if tiny.handle_stdin(&poll) {
-                        break 'mainloop;
+            loop {
+                // FIXME this will sometimes miss the tick deadline
+                match poll.poll(&mut events, None) {
+                    Err(_) => {
+                        // usually SIGWINCH, which is caught by term_input
+                        tui.lock().unwrap().resize();
+                        tui.lock().unwrap().draw();
                     }
-                }
-                Ok(_) => {
-                    for event in events.iter() {
-                        let token = event.token();
-                        if token == STDIN_TOKEN {
-                            if tiny.handle_stdin(&poll) {
-                                break 'mainloop;
-                            }
-                        } else {
-                            match find_token_conn_idx(&tiny.conns, token) {
-                                None => {
-                                    tiny.logger.get_debug_logs().write_line(
-                                        format_args!(
-                                            "BUG: Can't find Token in conns: {:?}",
-                                            event.token()));
-                                }
-                                Some(conn_idx) => {
-                                    tiny.handle_socket(&poll, event.readiness(), conn_idx);
-                                }
+                    Ok(_) => {
+                        input.read_input_events(&mut ev_buffer);
+                        for ev in ev_buffer.drain(0..) {
+                            match tui.lock().unwrap().handle_input_event(ev) {
+                                TUIRet::Input { msg, from } => {
+                                    if "msg" == "exit" { break 'mainloop; }
+                                    tui.lock().unwrap().add_msg(&msg.into_iter().collect::<String>(),
+                                        Timestamp::now(),
+                                        &MsgTarget::Server { serv_name: "debug" });
+                                },
+                                TUIRet::Abort => {
+                                    break 'mainloop;
+                                },
+                                _ => {}
                             }
                         }
                     }
+                }
 
-                    if last_tick.elapsed() >= Duration::from_secs(1) {
-                        for conn_idx in 0 .. tiny.conns.len() {
-                            let mut evs = Vec::with_capacity(2);
-                            {
-                                let conn = &mut tiny.conns[conn_idx];
-                                conn.tick(&mut evs, tiny.logger.get_debug_logs());
-                            }
-                            tiny.handle_conn_evs(&poll, conn_idx, evs);
-                        }
-                        last_tick = Instant::now();
-                    }
-                }
+                tui.lock().unwrap().draw();
             }
-
-            tiny.tui.draw();
-        }
-    */
     }
 
     fn init_mentions_tab(&mut self) {
@@ -333,7 +316,7 @@ impl<'poll> Tiny<'poll> {
             if let Some(conn) = find_conn(&mut self.conns, src.serv_name()) {
                 let new_nick = words[1];
                 conn.set_nick(new_nick);
-                self.tui.set_nick(conn.get_serv_name(), Rc::new(new_nick.to_owned()));
+                self.tui.set_nick(conn.get_serv_name(), Arc::new(new_nick.to_owned()));
             }
         }
 
@@ -604,7 +587,7 @@ impl<'poll> Tiny<'poll> {
             }
             ConnEv::NickChange(new_nick) => {
                 let conn = &self.conns[conn_idx];
-                self.tui.set_nick(conn.get_serv_name(), Rc::new(new_nick));
+                self.tui.set_nick(conn.get_serv_name(), Arc::new(new_nick));
             }
         }
     }

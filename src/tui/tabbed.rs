@@ -1,7 +1,7 @@
 use term_input::Key;
 use termbox_simple::Termbox;
 
-use std::rc::Rc;
+use std::sync::Arc;
 
 use config::Colors;
 use config::Style;
@@ -322,7 +322,7 @@ impl Tabbed {
         }
     }
 
-    pub fn get_nicks(&self, serv_name: &str, chan_name: &str) -> Option<Rc<Trie>> {
+    pub fn get_nicks(&self, serv_name: &str, chan_name: &str) -> Option<Arc<Trie>> {
         match self.find_chan_tab_idx(serv_name, chan_name) {
             None => None,
             Some(i) => Some(self.tabs[i].widget.get_nicks())
@@ -741,7 +741,7 @@ impl Tabbed {
         });
     }
 
-    pub fn set_nick(&mut self, new_nick: Rc<String>, target: &MsgTarget) {
+    pub fn set_nick(&mut self, new_nick: Arc<String>, target: &MsgTarget) {
         self.apply_to_target(target, &|tab: &mut Tab, _| tab.widget.set_nick(new_nick.clone()));
     }
 

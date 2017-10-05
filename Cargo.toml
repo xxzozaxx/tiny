@@ -33,14 +33,15 @@ slack = { path = "/home/omer/rust/slack-rs" }
 slack_api = { path = "/home/omer/rust/slack-rs-api" }
 term_input = "0.1.2"
 termbox_simple = "0.2.0"
+quick-error = "1.2.1"
 time = "0.1"
 tokio-core = "0.1.9"
 url = "1.5"
 websocket = "0.20.2"
+serde_json = "1.0.3"
 
 [dependencies.reqwest]
-git = "https://github.com/seanmonstar/reqwest"
-rev = "a646bb56deccf7004d7069e5b13bbbf8042598d7"
+version = "0.8.0"
 features = ["unstable"]
 
 [dev-dependencies]

@@ -2,7 +2,7 @@ use termbox_simple::Termbox;
 use term_input::Key;
 
 use std::convert::From;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use time::Tm;
 use time;
@@ -26,7 +26,7 @@ pub struct MessagingUI {
     msg_area: MsgArea,
 
     /// Stacked user input fields. Topmost one handles keypresses.
-    input_field: Vec<Box<Widget>>,
+    input_field: TextField,
 
     width: i32,
     height: i32,
@@ -35,9 +35,9 @@ pub struct MessagingUI {
     // properly highlight mentions.
     //
     // Rc to be able to share with dynamic messages.
-    nicks: Rc<Trie>,
+    nicks: Arc<Trie>,
 
-    current_nick: Option<Rc<String>>,
+    current_nick: Option<Arc<String>>,
     draw_current_nick: bool,
 
     last_activity_line: Option<ActivityLine>,
@@ -80,10 +80,10 @@ impl MessagingUI {
     pub fn new(width : i32, height : i32) -> MessagingUI {
         MessagingUI {
             msg_area: MsgArea::new(width, height - 1),
-            input_field: vec![Box::new(TextField::new(width))],
+            input_field: TextField::new(width),
             width: width,
             height: height,
-            nicks: Rc::new(Trie::new()),
+            nicks: Arc::new(Trie::new()),
             current_nick: None,
             draw_current_nick: true,
             last_activity_line: None,
@@ -91,11 +91,11 @@ impl MessagingUI {
         }
     }
 
-    pub fn set_nick(&mut self, nick: Rc<String>) {
+    pub fn set_nick(&mut self, nick: Arc<String>) {
         self.current_nick = Some(nick);
     }
 
-    pub fn get_nick(&self) -> Option<Rc<String>> {
+    pub fn get_nick(&self) -> Option<Arc<String>> {
         self.current_nick.clone()
     }
 
@@ -185,10 +185,10 @@ impl MessagingUI {
 
             key => {
                 match self.input_field.keypressed(key) {
-                    WidgetRet::Remove => {
-                        self.input_field.pop();
-                        WidgetRet::KeyHandled
-                    },
+                    // WidgetRet::Remove => {
+                    //     self.input_field.pop();
+                    //     WidgetRet::KeyHandled
+                    // },
                     ret => ret,
                 }
             },
@@ -214,25 +214,26 @@ impl MessagingUI {
         let widget_width =
             if self.draw_current_nick { width - nick_width } else { width };
 
-        for w in &mut self.input_field {
-            w.resize(widget_width, 1);
-        }
+        self.input_field.resize(widget_width, 1);
+        // for w in &mut self.input_field {
+        //     w.resize(widget_width, 1);
+        // }
     }
 
-    pub fn get_nicks(&self) -> Rc<Trie> {
+    pub fn get_nicks(&self) -> Arc<Trie> {
         self.nicks.clone()
     }
 
     fn toggle_exit_dialogue(&mut self) {
-        assert!(self.input_field.len() > 0);
+        // assert!(self.input_field.len() > 0);
         // FIXME: This is a bit too fragile I think. Since we only stack an exit
         // dialogue on top of the input field at the moment, checking the len()
         // is fine. If we decide to stack more stuff it'll break.
-        if self.input_field.len() == 1 {
-            self.input_field.push(Box::new(ExitDialogue::new(self.width)));
-        } else {
-            self.input_field.pop();
-        }
+        // if self.input_field.len() == 1 {
+        //     self.input_field.push(Box::new(ExitDialogue::new(self.width)));
+        // } else {
+        //     self.input_field.pop();
+        // }
     }
 }
 
@@ -341,11 +342,11 @@ impl MessagingUI {
 
 impl MessagingUI {
     pub fn clear_nicks(&mut self) {
-        Rc::get_mut(&mut self.nicks).unwrap().clear();
+        Arc::get_mut(&mut self.nicks).unwrap().clear();
     }
 
     pub fn join(&mut self, nick: &str, ts: Option<Timestamp>) {
-        Rc::get_mut(&mut self.nicks).unwrap().insert(nick);
+        Arc::get_mut(&mut self.nicks).unwrap().insert(nick);
 
         if let Some(ts) = ts {
             let line_idx = self.get_activity_line_idx(ts);
@@ -360,7 +361,7 @@ impl MessagingUI {
     }
 
     pub fn part(&mut self, nick: &str, ts: Option<Timestamp>) {
-        Rc::get_mut(&mut self.nicks).unwrap().remove(nick);
+        Arc::get_mut(&mut self.nicks).unwrap().remove(nick);
 
         if let Some(ts) = ts {
             let line_idx = self.get_activity_line_idx(ts);
@@ -375,8 +376,8 @@ impl MessagingUI {
     }
 
     pub fn nick(&mut self, old_nick: &str, new_nick: &str, ts: Timestamp) {
-        Rc::get_mut(&mut self.nicks).unwrap().remove(old_nick);
-        Rc::get_mut(&mut self.nicks).unwrap().insert(new_nick);
+        Arc::get_mut(&mut self.nicks).unwrap().remove(old_nick);
+        Arc::get_mut(&mut self.nicks).unwrap().insert(new_nick);
 
         let line_idx = self.get_activity_line_idx(ts);
         self.msg_area.modify_line(line_idx, |line| {

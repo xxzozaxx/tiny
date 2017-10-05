@@ -1,7 +1,7 @@
 use std::any::Any;
 use std::cmp::{max, min};
 use std::mem;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use term_input::{Key, Arrow};
 use termbox_simple::Termbox;
@@ -511,7 +511,7 @@ impl Widget for TextField {
 
     // fn autocomplete(&mut self, dict : &Trie) {
     fn event(&mut self, ev: Box<Any>) -> WidgetRet {
-        match ev.downcast_ref::<Rc<Trie>>() {
+        match ev.downcast_ref::<Arc<Trie>>() {
             None => WidgetRet::KeyIgnored,
             Some(dict) => {
                 if self.in_autocomplete() {

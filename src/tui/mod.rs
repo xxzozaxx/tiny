@@ -7,7 +7,7 @@ pub mod text_field;
 pub mod widget;
 
 use std::fs;
-use std::rc::Rc;
+use std::sync::Arc;
 use std::str;
 
 use config::Colors;
@@ -102,11 +102,11 @@ impl TUI {
         self.ui.set_tab_style(style, target);
     }
 
-    pub fn set_nick(&mut self, serv_name: &str, nick: Rc<String>) {
+    pub fn set_nick(&mut self, serv_name: &str, nick: Arc<String>) {
         self.ui.set_nick(nick, &MsgTarget::AllServTabs { serv_name: serv_name });
     }
 
-    pub fn get_nicks(&self, serv_name: &str, chan_name: &str) -> Option<Rc<Trie>> {
+    pub fn get_nicks(&self, serv_name: &str, chan_name: &str) -> Option<Arc<Trie>> {
         self.ui.get_nicks(serv_name, chan_name)
     }
 }
