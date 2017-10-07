@@ -30,6 +30,9 @@ pub fn main(tui: Arc<Mutex<tui::TUI>>, recv: Receiver<String>) -> Box<FnBox() ->
     Box::new(move || {
         tui.lock().unwrap().new_chan_tab("slack", "slack");
 
+        let tui1 = tui.clone();
+        let tui2 = tui.clone();
+
         let mut core = Core::new().unwrap();
         let handle = core.handle();
 
@@ -49,12 +52,25 @@ pub fn main(tui: Arc<Mutex<tui::TUI>>, recv: Receiver<String>) -> Box<FnBox() ->
                     .map(|(duplex, _)| duplex.split())
                     .and_then(move |(sink, stream): (SplitSink<_>, SplitStream<_>)| {
 
-                        let writer = sink.sink_from_err()
-                            .send_all(recv.map(websocket::OwnedMessage::Text).map_err(Error::Receiver));
+                        let writer = recv.map_err(Error::Receiver).for_each(
+                            move |e: String| {
+                                tui1.lock().unwrap().add_privmsg(
+                                    "client",
+                                    &format!("msg: {}", e),
+                                    Timestamp::now(),
+                                    &MsgTarget::AllTabs);
+                                if e == "exit" {
+                                    return futures::future::err(Error::Receiver(()))
+                                } else {
+                                    futures::future::ok(())
+                                }
+                            });
+
+                            // .send_all(recv.map(websocket::OwnedMessage::Text).map_err(Error::Receiver));
 
                         let reader = stream.map_err(Error::WebSocket).for_each(
                             move |e: websocket::OwnedMessage| {
-                                tui.lock().unwrap().add_privmsg(
+                                tui2.lock().unwrap().add_privmsg(
                                     "slack server",
                                     &format!("{:?}", e),
                                     Timestamp::now(),
