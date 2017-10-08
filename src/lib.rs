@@ -136,8 +136,8 @@ impl<'poll> Tiny<'poll> {
     {
         let tui = Arc::new(Mutex::new(TUI::new(Colors::default())));
 
-        let (send_in, recv_in) = channel(100);
-        let _ = std::thread::spawn(slack_conn::main(tui.clone(), recv_in));
+        let (mut send_in, recv_in) = channel(100);
+        let thr = std::thread::spawn(slack_conn::main(tui.clone(), recv_in));
 
         let poll = Poll::new().unwrap();
 
@@ -171,12 +171,20 @@ impl<'poll> Tiny<'poll> {
                     Ok(_) => {
                         input.read_input_events(&mut ev_buffer);
                         for ev in ev_buffer.drain(0..) {
-                            match tui.lock().unwrap().handle_input_event(ev) {
+                            // inlining this `ev` causes lock to be held inside the whole match
+                            // expr
+                            let ev = tui.lock().unwrap().handle_input_event(ev);
+                            match ev {
                                 TUIRet::Input { msg, from } => {
-                                    if "msg" == "exit" { break 'mainloop; }
-                                    tui.lock().unwrap().add_msg(&msg.into_iter().collect::<String>(),
+                                    let send_ret = send_in.try_send(msg.iter().collect());
+                                    let msg_str = msg.into_iter().collect::<String>();
+                                    tui.lock().unwrap().add_msg(&format!("send ret: {:?}", send_ret),
                                         Timestamp::now(),
                                         &MsgTarget::Server { serv_name: "debug" });
+                                    tui.lock().unwrap().add_msg(&msg_str,
+                                        Timestamp::now(),
+                                        &MsgTarget::Server { serv_name: "debug" });
+                                    if msg_str == "exit" { break 'mainloop; }
                                 },
                                 TUIRet::Abort => {
                                     break 'mainloop;
@@ -189,6 +197,8 @@ impl<'poll> Tiny<'poll> {
 
                 tui.lock().unwrap().draw();
             }
+
+        let _ = thr.join();
     }
 
     fn init_mentions_tab(&mut self) {

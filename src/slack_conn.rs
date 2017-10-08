@@ -13,6 +13,7 @@ use serde;
 use serde_json;
 use slack_api;
 use std::boxed::FnBox;
+use std::io::Write;
 use std::sync::Arc;
 use std::sync::Mutex;
 use tokio_core::reactor::Core;
@@ -43,7 +44,6 @@ pub fn main(tui: Arc<Mutex<tui::TUI>>, recv: Receiver<String>) -> Box<FnBox() ->
             .map_err(|e| Error::Receiver(()))
             .and_then(move |r| {
                 let url = r.url.unwrap();
-                // println!("got rtm url: {}", url);
                 // let url = Url::parse(&url).unwrap();
                 ClientBuilder::new(&url)
                     .unwrap()
@@ -59,6 +59,7 @@ pub fn main(tui: Arc<Mutex<tui::TUI>>, recv: Receiver<String>) -> Box<FnBox() ->
                                     &format!("msg: {}", e),
                                     Timestamp::now(),
                                     &MsgTarget::AllTabs);
+                                tui1.lock().unwrap().draw();
                                 if e == "exit" {
                                     return futures::future::err(Error::Receiver(()))
                                 } else {
@@ -76,6 +77,7 @@ pub fn main(tui: Arc<Mutex<tui::TUI>>, recv: Receiver<String>) -> Box<FnBox() ->
                                     Timestamp::now(),
                                     &MsgTarget::AllTabs,
                                 );
+                                tui2.lock().unwrap().draw();
                                 futures::future::ok(())
                             },
                         );
@@ -84,7 +86,7 @@ pub fn main(tui: Arc<Mutex<tui::TUI>>, recv: Receiver<String>) -> Box<FnBox() ->
                     })
             });
 
-        core.run(f).expect("Unable to run");
+        let _ = core.run(f);
     })
 }
 
