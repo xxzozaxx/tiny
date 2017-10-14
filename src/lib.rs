@@ -8,13 +8,26 @@
 extern crate quickcheck;
 
 extern crate alloc_system;
+extern crate futures;
 extern crate libc;
 extern crate mio;
+extern crate mio_more;
 extern crate net2;
-extern crate time;
+extern crate reqwest;
 extern crate serde;
+extern crate serde_json;
 extern crate serde_yaml;
-#[macro_use] extern crate serde_derive;
+extern crate slack;
+extern crate slack_api;
+extern crate time;
+extern crate tokio_core;
+extern crate websocket;
+
+#[macro_use]
+extern crate serde_derive;
+
+#[macro_use]
+extern crate quick_error;
 
 extern crate term_input;
 extern crate termbox_simple;
@@ -28,6 +41,7 @@ mod wire;
 pub mod config;
 pub mod trie;
 pub mod tui;
+mod slack_conn;
 
 use mio::Events;
 use mio::Poll;
@@ -122,6 +136,7 @@ struct Tiny<'poll> {
     tui: TUI,
     input_ev_handler: Input,
     logger: Logger,
+    slack_conn: slack_conn::SlackConnHandle,
 }
 
 static STDIN_TOKEN: Token = Token(libc::STDIN_FILENO as usize);
@@ -146,6 +161,12 @@ impl<'poll> Tiny<'poll> {
             conns.push(conn);
         }
 
+        let slack_api_tok = ::std::env::var("SLACK_API_TOK").unwrap();
+        let slack_conn = slack_conn::spawn(slack_api_tok);
+        let slack_conn_tok = mio::Token(1);
+        let slack_tab = MsgTarget::Server { serv_name: "slack" };
+        poll.register(&slack_conn.recv, slack_conn_tok, Ready::readable(), PollOpt::level()).unwrap();
+
         let mut tiny = Tiny {
             conns: conns,
             defaults: defaults,
@@ -153,8 +174,10 @@ impl<'poll> Tiny<'poll> {
             tui: TUI::new(colors),
             input_ev_handler: Input::new(),
             logger: Logger::new(PathBuf::from(log_dir)),
+            slack_conn: slack_conn,
         };
 
+        tiny.tui.new_server_tab("slack");
         tiny.init_mentions_tab();
         tiny.tui.draw();
 
@@ -175,7 +198,29 @@ impl<'poll> Tiny<'poll> {
                         let token = event.token();
                         if token == STDIN_TOKEN {
                             if tiny.handle_stdin(&poll) {
+                                tiny.slack_conn.send.send(slack_conn::Req::Close).unwrap();
                                 break 'mainloop;
+                            }
+                        } else if token == slack_conn_tok {
+                            match tiny.slack_conn.recv.recv() {
+                                Err(err) => {
+                                    tiny.tui.add_client_err_msg(
+                                        &format!("{:?}", err),
+                                        &slack_tab);
+                                },
+                                Ok(slack_conn::Resp::ChannelList(chans)) => {
+                                    tiny.tui.add_client_msg("Channels:", &slack_tab);
+                                    for chan in chans {
+                                        tiny.tui.add_client_msg(
+                                            &format!("{:?}", chan),
+                                            &slack_tab);
+                                    }
+                                },
+                                Ok(slack_conn::Resp::WS(msg)) => {
+                                    tiny.tui.add_client_msg(
+                                        &format!("Websocket event: {:?}", msg),
+                                        &slack_tab);
+                                }
                             }
                         } else {
                             match find_token_conn_idx(&tiny.conns, token) {
@@ -370,6 +415,10 @@ impl<'poll> Tiny<'poll> {
 
         else if words[0] == "clear" {
             self.tui.clear(&src.to_target());
+        }
+
+        else if words[0] == "slack_chans" {
+            self.slack_conn.send.send(slack_conn::Req::ChannelList).unwrap();
         }
 
         else {
