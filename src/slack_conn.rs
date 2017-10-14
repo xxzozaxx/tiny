@@ -5,6 +5,7 @@ use serde_json;
 use mio_more::channel::{channel, Sender, Receiver};
 use slack_api;
 use reqwest::unstable::async as reqwest;
+// use futures::sync::mpsc::SendError;
 use tokio_core::reactor::Core;
 use std::thread;
 use websocket::async::futures::stream::SplitSink;
@@ -140,6 +141,7 @@ impl SlackHTTPConn {
 }
 
 enum SlackWSReq {
+    Pong(Vec<u8>),
     Close,
 }
 
@@ -150,6 +152,7 @@ struct SlackWSConnHandle {
 
 fn spawn_ws_conn(token: String, send_resp: Sender<Resp>) -> SlackWSConnHandle {
     let (send_req, recv_req) = futures_mpsc::channel(10);
+    let mut send_req_clone = send_req.clone();
 
     let thr = thread::spawn(move || {
 
@@ -168,19 +171,31 @@ fn spawn_ws_conn(token: String, send_resp: Sender<Resp>) -> SlackWSConnHandle {
                     .async_connect(None, &handle)
                     .map_err(Error::WebSocket)
                     .map(|(duplex, _)| duplex.split())
-                    .and_then(move |(_sink, stream): (SplitSink<_>, SplitStream<_>)| {
+                    .and_then(move |(sink, stream): (SplitSink<_>, SplitStream<_>)| {
 
-                        let writer = recv_req.map_err(Error::Receiver).for_each(
-                            move |e: SlackWSReq| {
+                        let writer =
+                            recv_req
+                            .map_err(Error::Receiver)
+                            .and_then(|e: SlackWSReq| {
                                 match e {
-                                    SlackWSReq::Close => 
-                                        futures::future::err(Error::Receiver(()))
+                                    SlackWSReq::Close =>
+                                        futures::future::err(Error::Close(())),
+                                    SlackWSReq::Pong(data) =>
+                                        futures::future::ok(websocket::OwnedMessage::Pong(data)),
                                 }
-                            });
+                            })
+                            .forward(sink);
 
                         let reader = stream.map_err(Error::WebSocket).for_each(
                             move |e: websocket::OwnedMessage| {
-                                send_resp.send(Resp::WS(e)).unwrap();
+                                match e {
+                                    websocket::OwnedMessage::Ping(data) => {
+                                        send_req_clone.try_send(SlackWSReq::Pong(data)).unwrap();
+                                    },
+                                    e => {
+                                        send_resp.send(Resp::WS(e)).unwrap();
+                                    }
+                                }
                                 futures::future::ok(())
                             },
                             );
@@ -216,6 +231,14 @@ quick_error! {
         Receiver(err: ()) {
             description("receiver error")
             display("Receiver error")
+        }
+        // Sender(err: SendError<websocket::OwnedMessage>) {
+        //     description("sender error")
+        //     display("Sender error")
+        // }
+        Close(err: ()) {
+            description("close")
+            display("Close") 
         }
     }
 }
