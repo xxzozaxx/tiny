@@ -47,6 +47,7 @@ use mio::Events;
 use mio::Poll;
 use mio::PollOpt;
 use mio::Ready;
+use std::collections::HashMap;
 use mio::Token;
 use mio::unix::EventedFd;
 use mio::unix::UnixReady;
@@ -165,6 +166,8 @@ impl<'poll> Tiny<'poll> {
         let slack_conn = slack_conn::spawn(slack_api_tok);
         let slack_conn_tok = mio::Token(1);
         let slack_tab = MsgTarget::Server { serv_name: "slack" };
+        let mut slack_chans: HashMap<String,String> = HashMap::new();
+        let mut slack_users: HashMap<String, String> = HashMap::new();
         poll.register(&slack_conn.recv, slack_conn_tok, Ready::readable(), PollOpt::level()).unwrap();
 
         let mut tiny = Tiny {
@@ -177,9 +180,13 @@ impl<'poll> Tiny<'poll> {
             slack_conn: slack_conn,
         };
 
-        tiny.tui.new_server_tab("slack");
         tiny.init_mentions_tab();
+        tiny.tui.new_server_tab("slack");
         tiny.tui.draw();
+
+        tiny.slack_conn.send.send(slack_conn::Req::ChannelList).unwrap();
+        tiny.slack_conn.send.send(slack_conn::Req::ImList).unwrap();
+        tiny.slack_conn.send.send(slack_conn::Req::UserList).unwrap();
 
         let mut last_tick = Instant::now();
         let mut events = Events::with_capacity(10);
@@ -209,10 +216,56 @@ impl<'poll> Tiny<'poll> {
                                         &slack_tab);
                                 },
                                 Ok(slack_conn::Resp::ChannelList(chans)) => {
-                                    tiny.tui.add_client_msg("Channels:", &slack_tab);
+                                    // tiny.tui.add_client_msg("Channels:", &slack_tab);
+                                    // for chan in &chans {
+                                    //     tiny.tui.add_client_msg(
+                                    //         &format!("{:?}", chan),
+                                    //         &slack_tab);
+                                    // }
+
                                     for chan in chans {
+                                        if let Some(true) = chan.is_member {
+                                            let chan_name = chan.name.unwrap();
+                                            let chan_id = chan.id.unwrap();
+
+                                            slack_chans.insert(chan_id.clone(), chan_name.clone());
+
+                                            tiny.tui.new_chan_tab("slack", &chan_name);
+                                            tiny.tui.show_topic(
+                                                &chan.topic.unwrap().value.unwrap(),
+                                                Timestamp::now(),
+                                                &MsgTarget::Chan { serv_name: "slack", chan_name: &chan_name });
+
+                                            // request history
+                                            tiny.slack_conn.send.send(slack_conn::Req::ChannelHistory(chan_id)).unwrap();
+                                        }
+                                    }
+                                },
+                                Ok(slack_conn::Resp::UserList(users)) => {
+                                    for user in users {
+                                        slack_users.insert(user.id.unwrap(), user.name.unwrap());
+                                    }
+                                }
+                                Ok(slack_conn::Resp::ChannelHistory(chan_id, msgs)) => {
+                                    for msg in msgs.into_iter().rev() {
+                                        if let slack_api::Message::Standard(std_msg) = msg {
+                                            let chan_name = slack_chans.get(&chan_id).unwrap();
+                                            tiny.tui.add_privmsg(
+                                                slack_users.get(&std_msg.user.unwrap()).unwrap(),
+                                                &std_msg.text.unwrap(),
+                                                Timestamp::now(),
+                                                &MsgTarget::Chan {
+                                                    serv_name: "slack",
+                                                    chan_name: &chan_name,
+                                                });
+                                        }
+                                    }
+                                }
+                                Ok(slack_conn::Resp::ImList(ims)) => {
+                                    tiny.tui.add_client_msg("Ims:", &slack_tab);
+                                    for im in &ims {
                                         tiny.tui.add_client_msg(
-                                            &format!("{:?}", chan),
+                                            &format!("{:?}", im),
                                             &slack_tab);
                                     }
                                 },
@@ -415,10 +468,6 @@ impl<'poll> Tiny<'poll> {
 
         else if words[0] == "clear" {
             self.tui.clear(&src.to_target());
-        }
-
-        else if words[0] == "slack_chans" {
-            self.slack_conn.send.send(slack_conn::Req::ChannelList).unwrap();
         }
 
         else {

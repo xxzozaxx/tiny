@@ -15,11 +15,17 @@ use websocket;
 
 pub enum Resp {
     ChannelList(Vec<slack_api::Channel>),
+    ImList(Vec<slack_api::Im>),
+    UserList(Vec<slack_api::User>),
+    ChannelHistory(String, Vec<slack_api::Message>),
     WS(websocket::OwnedMessage),
 }
 
 pub enum Req {
     ChannelList,
+    UserList,
+    ImList,
+    ChannelHistory(String),
     Close,
 }
 
@@ -33,9 +39,7 @@ struct SlackHTTPConn {
 pub struct SlackConnHandle {
     pub send: Sender<Req>,
     pub recv: Receiver<Resp>,
-    // pub ws_send: 
     pub http_thread: thread::JoinHandle<()>,
-    // pub ws_thread: thread::JoinHandle<()>,
 }
 
 pub fn spawn(token: String) -> SlackConnHandle {
@@ -75,6 +79,52 @@ impl SlackHTTPConn {
                         let req = slack_api::channels::ListRequest::default();
                         if let Ok(resp) = slack_api::channels::list(&client, &token, &req) {
                             send.send(Resp::ChannelList(resp.channels.unwrap())).unwrap();
+                        }
+                    });
+                }
+                Ok(Req::ImList) => {
+                    let send = self.send.clone();
+                    let token = self.token.clone();
+                    let _ = thread::spawn(move || {
+                        let client = slack_api::default_client();
+                        let req = slack_api::im::ListRequest {
+                            cursor: None,
+                            limit: Some(5),
+                        };
+                        if let Ok(resp) = slack_api::im::list(&client, &token, &req) {
+                            send.send(Resp::ImList(resp.ims.unwrap())).unwrap();
+                        }
+                    });
+                }
+                Ok(Req::UserList) => {
+                    let send = self.send.clone();
+                    let token = self.token.clone();
+                    let _ = thread::spawn(move || {
+                        let client = slack_api::default_client();
+                        let req = slack_api::users::ListRequest::default();
+                        if let Ok(resp) = slack_api::users::list(&client, &token, &req) {
+                            send.send(Resp::UserList(resp.members.unwrap())).unwrap();
+                        }
+                    });
+                },
+                Ok(Req::ChannelHistory(chan_name)) => {
+                    let send = self.send.clone();
+                    let token = self.token.clone();
+                    let _ = thread::spawn(move || {
+                        let client = slack_api::default_client();
+                        let resp = {
+                            let req = slack_api::channels::HistoryRequest {
+                                channel: &chan_name,
+                                latest: None,
+                                oldest: None,
+                                inclusive: None,
+                                count: Some(10),
+                                unreads: None,
+                            };
+                            slack_api::channels::history(&client, &token, &req)
+                        };
+                        if let Ok(resp) = resp {
+                            send.send(Resp::ChannelHistory(chan_name, resp.messages.unwrap())).unwrap();
                         }
                     });
                 }
@@ -166,10 +216,6 @@ quick_error! {
         Receiver(err: ()) {
             description("receiver error")
             display("Receiver error")
-        }
-        Sender(err: futures_mpsc::SendError<websocket::OwnedMessage>) {
-            description("sender error")
-            display("Sender error")
         }
     }
 }
