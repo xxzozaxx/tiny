@@ -1,6 +1,7 @@
 pub mod exit_dialogue;
 pub mod messaging;
 pub mod msg_area;
+pub mod name_list;
 pub mod tabbed;
 pub mod termbox;
 pub mod text_field;

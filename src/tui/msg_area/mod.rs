@@ -41,6 +41,10 @@ impl MsgArea {
         }
     }
 
+    pub fn width(&self) -> i32 {
+        self.width
+    }
+
     pub fn resize(&mut self, width: i32, height: i32) {
         self.width = width;
         self.height = height;
