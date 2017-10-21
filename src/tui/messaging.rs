@@ -137,14 +137,14 @@ impl MessagingUI {
 
         if self.draw_name_list && self.name_list.width() != 0 {
             writeln!(::std::io::stderr(), "drawing name list");
-            for i in 0 .. self.height - 1 {
-                tb.change_cell(
-                    pos_x + self.msg_area.width(),
-                    pos_y + i,
-                    '|',
-                    colors.user_msg.fg,
-                    colors.user_msg.bg);
-            }
+            // for i in 0 .. self.height - 1 {
+            //     tb.change_cell(
+            //         pos_x + self.msg_area.width(),
+            //         pos_y + i,
+            //         '|',
+            //         colors.user_msg.fg,
+            //         colors.user_msg.bg);
+            // }
             self.name_list.draw(tb, colors, pos_x + self.msg_area.width() + 1, pos_y);
         } else {
             writeln!(::std::io::stderr(), "not drawing name list");
@@ -282,8 +282,11 @@ impl MessagingUI {
         &self.nicks
     }
 
-    fn toggle_name_list(&mut self) {
+    pub fn toggle_name_list(&mut self) {
         self.draw_name_list = !self.draw_name_list;
+        let w = self.width;
+        let h = self.height;
+        self.resize(w, h);
     }
 
     fn toggle_exit_dialogue(&mut self) {

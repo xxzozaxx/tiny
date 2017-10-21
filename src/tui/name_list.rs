@@ -3,7 +3,7 @@ use term_input::Key;
 
 use config::Colors;
 use tui::termbox;
-use tui::widget::{WidgetRet, Widget};
+use tui::widget::WidgetRet;
 
 pub struct NameList {
     names: Vec<String>,

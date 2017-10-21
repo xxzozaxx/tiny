@@ -280,4 +280,8 @@ impl TUI {
     pub fn clear(&mut self, target: &MsgTarget) {
         self.ui.clear(target);
     }
+
+    pub fn toggle_name_list(&mut self, target: &MsgTarget) {
+        self.ui.toggle_name_list(target);
+    }
 }
