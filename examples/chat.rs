@@ -71,6 +71,9 @@ fn main() {
                         TUIRet::Input { msg, from } => {
                             if msg == "/clear".chars().collect::<Vec<char>>() {
                                 tui.clear(&from.to_target())
+                            } else if msg == "/names".chars().collect::<Vec<char>>() {
+                                tui.toggle_name_list(
+                                    &MsgTarget::Chan { serv_name: "debug", chan_name: "chan" });
                             } else {
                                 tui.add_msg(&msg.into_iter().collect::<String>(),
                                             Timestamp::now(),

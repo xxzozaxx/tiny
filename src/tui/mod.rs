@@ -1,6 +1,7 @@
 pub mod exit_dialogue;
 pub mod messaging;
 pub mod msg_area;
+pub mod name_list;
 pub mod tabbed;
 pub mod termbox;
 pub mod text_field;
@@ -278,5 +279,9 @@ impl TUI {
 
     pub fn clear(&mut self, target: &MsgTarget) {
         self.ui.clear(target);
+    }
+
+    pub fn toggle_name_list(&mut self, target: &MsgTarget) {
+        self.ui.toggle_name_list(target);
     }
 }

@@ -3,6 +3,7 @@ use term_input::Key;
 
 use std::convert::From;
 use std::rc::Rc;
+use std::io::Write;
 
 use time::Tm;
 use time;
@@ -15,6 +16,7 @@ use tui::exit_dialogue::ExitDialogue;
 use tui::msg_area::line::SchemeStyle;
 use tui::msg_area::line::SegStyle;
 use tui::msg_area::MsgArea;
+use tui::name_list::NameList;
 use tui::termbox;
 use tui::text_field::TextField;
 use tui::widget::WidgetRet;
@@ -30,6 +32,10 @@ pub struct MessagingUI {
     input_field: TextField,
     exit_dialogue: Option<ExitDialogue>,
 
+    /// List widget that shows nicks in the channel
+    name_list: NameList,
+    draw_name_list: bool,
+
     width: i32,
     height: i32,
 
@@ -42,6 +48,16 @@ pub struct MessagingUI {
 
     last_activity_line: Option<ActivityLine>,
     last_activity_ts: Option<Timestamp>,
+}
+
+const DRAW_THRES: f32 = 30f32 / 100f32;
+
+fn name_list_width(total_width: i32) -> Option<i32> {
+    if total_width as f32 * DRAW_THRES > 10f32 {
+        Some(::std::cmp::min(20, (total_width as f32 * DRAW_THRES) as i32))
+    } else {
+        None
+    }
 }
 
 /// Like `time::Tm`, but we only care about hour and minute parts.
@@ -77,11 +93,14 @@ struct ActivityLine {
 }
 
 impl MessagingUI {
-    pub fn new(width : i32, height : i32) -> MessagingUI {
+    pub fn new(width: i32, height: i32) -> MessagingUI {
+        let list_width = name_list_width(width);
         MessagingUI {
             msg_area: MsgArea::new(width, height - 1),
             input_field: TextField::new(width),
             exit_dialogue: None,
+            name_list: NameList::new(list_width.unwrap_or(0), height - 1),
+            draw_name_list: true,
             width: width,
             height: height,
             nicks: Trie::new(),
@@ -115,6 +134,21 @@ impl MessagingUI {
 
     pub fn draw(&self, tb: &mut Termbox, colors: &Colors, pos_x: i32, pos_y: i32) {
         self.msg_area.draw(tb, colors, pos_x, pos_y);
+
+        if self.draw_name_list && self.name_list.width() != 0 {
+            writeln!(::std::io::stderr(), "drawing name list");
+            // for i in 0 .. self.height - 1 {
+            //     tb.change_cell(
+            //         pos_x + self.msg_area.width(),
+            //         pos_y + i,
+            //         '|',
+            //         colors.user_msg.fg,
+            //         colors.user_msg.bg);
+            // }
+            self.name_list.draw(tb, colors, pos_x + self.msg_area.width() + 1, pos_y);
+        } else {
+            writeln!(::std::io::stderr(), "not drawing name list");
+        }
 
         if let Some(ref nick) = self.current_nick {
             if self.draw_current_nick {
@@ -211,7 +245,18 @@ impl MessagingUI {
     pub fn resize(&mut self, width: i32, height: i32) {
         self.width = width;
         self.height = height;
-        self.msg_area.resize(width, height - 1);
+
+        let name_list_width = name_list_width(width);
+        match name_list_width {
+            Some(list_width) if self.draw_name_list => {
+                self.name_list.resize(list_width, height - 1);
+                self.msg_area.resize(width - list_width - 1, height - 1);
+            },
+            _ => {
+                self.name_list.resize(0, height - 1);
+                self.msg_area.resize(width, height - 1);
+            }
+        }
 
         let nick_width = match self.current_nick {
             None =>
@@ -222,7 +267,7 @@ impl MessagingUI {
         };
 
         self.draw_current_nick =
-            (nick_width as f32) <= (width as f32) * (30f32 / 100f32);
+            (nick_width as f32) <= (width as f32) * DRAW_THRES;
 
         let widget_width =
             if self.draw_current_nick { width - nick_width } else { width };
@@ -235,6 +280,13 @@ impl MessagingUI {
 
     pub fn get_nicks(&self) -> &Trie {
         &self.nicks
+    }
+
+    pub fn toggle_name_list(&mut self) {
+        self.draw_name_list = !self.draw_name_list;
+        let w = self.width;
+        let h = self.height;
+        self.resize(w, h);
     }
 
     fn toggle_exit_dialogue(&mut self) {
@@ -355,6 +407,7 @@ impl MessagingUI {
 
     pub fn join(&mut self, nick: &str, ts: Option<Timestamp>) {
         self.nicks.insert(nick);
+        self.name_list.join(nick.to_owned());
 
         if let Some(ts) = ts {
             let line_idx = self.get_activity_line_idx(ts);
@@ -370,6 +423,7 @@ impl MessagingUI {
 
     pub fn part(&mut self, nick: &str, ts: Option<Timestamp>) {
         self.nicks.remove(nick);
+        self.name_list.part(nick);
 
         if let Some(ts) = ts {
             let line_idx = self.get_activity_line_idx(ts);
