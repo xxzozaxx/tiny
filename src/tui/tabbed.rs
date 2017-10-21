@@ -741,6 +741,10 @@ impl Tabbed {
         self.apply_to_target(target, &|tab: &mut Tab, _| tab.widget.toggle_name_list());
     }
 
+    pub fn set_nick_presence(&mut self, nick: &str, presence: &str, target: &MsgTarget) {
+        self.apply_to_target(target, &|tab: &mut Tab, _| tab.widget.set_nick_presence(nick, presence));
+    }
+
     ////////////////////////////////////////////////////////////////////////////
     // Helpers
 

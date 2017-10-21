@@ -227,14 +227,24 @@ impl<'poll> Tiny<'poll> {
                                         if let Some(true) = chan.is_member {
                                             let chan_name = chan.name.unwrap();
                                             let chan_id = chan.id.unwrap();
+                                            // let chan_members = chan.members.unwrap().into_iter().map(|user| slack_users.get(user.as_str()).unwrap());
 
                                             slack_chans.insert(chan_id.clone(), chan_name.clone());
 
+                                            let target = 
+                                                MsgTarget::Chan {
+                                                    serv_name: "slack",
+                                                    chan_name: &chan_name
+                                                };
                                             tiny.tui.new_chan_tab("slack", &chan_name);
                                             tiny.tui.show_topic(
                                                 &chan.topic.unwrap().value.unwrap(),
                                                 Timestamp::now(),
-                                                &MsgTarget::Chan { serv_name: "slack", chan_name: &chan_name });
+                                                &target);
+
+                                            // for chan_member in chan_members {
+                                            //     tiny.tui.add_nick(chan_member, None, &target);
+                                            // }
 
                                             // request history
                                             tiny.slack_conn.send.send(slack_conn::Req::ChannelHistory(chan_id)).unwrap();
@@ -267,6 +277,22 @@ impl<'poll> Tiny<'poll> {
                                         tiny.tui.add_client_msg(
                                             &format!("{:?}", im),
                                             &slack_tab);
+                                    }
+                                },
+                                Ok(slack_conn::Resp::SlackRTM(rtm_ev)) => {
+                                    tiny.tui.add_client_msg(
+                                        &format!("RTM event: {:?}", rtm_ev),
+                                        &slack_tab);
+
+                                    match rtm_ev {
+                                        slack::Event::PresenceChange { user, presence } => {
+                                            let nick = slack_users.get(&user).unwrap();
+                                            tiny.tui.set_nick_presence(
+                                                nick,
+                                                &presence,
+                                                &MsgTarget::AllTabs);
+                                        },
+                                        _ => {}
                                     }
                                 },
                                 Ok(slack_conn::Resp::WS(msg)) => {

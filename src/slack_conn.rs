@@ -4,6 +4,7 @@ use futures::Future;
 use serde_json;
 use mio_more::channel::{channel, Sender, Receiver};
 use slack_api;
+use slack;
 use reqwest::unstable::async as reqwest;
 // use futures::sync::mpsc::SendError;
 use tokio_core::reactor::Core;
@@ -19,6 +20,7 @@ pub enum Resp {
     ImList(Vec<slack_api::Im>),
     UserList(Vec<slack_api::User>),
     ChannelHistory(String, Vec<slack_api::Message>),
+    SlackRTM(slack::Event),
     WS(websocket::OwnedMessage),
 }
 
@@ -191,6 +193,16 @@ fn spawn_ws_conn(token: String, send_resp: Sender<Resp>) -> SlackWSConnHandle {
                                 match e {
                                     websocket::OwnedMessage::Ping(data) => {
                                         send_req_clone.try_send(SlackWSReq::Pong(data)).unwrap();
+                                    },
+                                    websocket::OwnedMessage::Text(str) => {
+                                        match serde_json::from_str(&str) {
+                                            Ok(msg) => {
+                                                send_resp.send(Resp::SlackRTM(msg)).unwrap();
+                                            },
+                                            Err(err) => {
+                                                send_resp.send(Resp::WS(websocket::OwnedMessage::Text(str))).unwrap();
+                                            },
+                                        }
                                     },
                                     e => {
                                         send_resp.send(Resp::WS(e)).unwrap();

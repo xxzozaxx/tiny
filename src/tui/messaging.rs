@@ -136,7 +136,6 @@ impl MessagingUI {
         self.msg_area.draw(tb, colors, pos_x, pos_y);
 
         if self.draw_name_list && self.name_list.width() != 0 {
-            writeln!(::std::io::stderr(), "drawing name list");
             // for i in 0 .. self.height - 1 {
             //     tb.change_cell(
             //         pos_x + self.msg_area.width(),
@@ -146,8 +145,6 @@ impl MessagingUI {
             //         colors.user_msg.bg);
             // }
             self.name_list.draw(tb, colors, pos_x + self.msg_area.width() + 1, pos_y);
-        } else {
-            writeln!(::std::io::stderr(), "not drawing name list");
         }
 
         if let Some(ref nick) = self.current_nick {
@@ -287,6 +284,10 @@ impl MessagingUI {
         let w = self.width;
         let h = self.height;
         self.resize(w, h);
+    }
+
+    pub fn set_nick_presence(&mut self, nick: &str, presence: &str) {
+        self.name_list.set_presence(nick, presence);
     }
 
     fn toggle_exit_dialogue(&mut self) {

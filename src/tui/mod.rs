@@ -284,4 +284,8 @@ impl TUI {
     pub fn toggle_name_list(&mut self, target: &MsgTarget) {
         self.ui.toggle_name_list(target);
     }
+
+    pub fn set_nick_presence(&mut self, nick: &str, presence: &str, target: &MsgTarget) {
+        self.ui.set_nick_presence(nick, presence, target);
+    }
 }

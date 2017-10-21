@@ -88,7 +88,7 @@ impl NameList {
         }
     }
 
-    pub fn set_precedence(&mut self, nick: &str, presence: &str) {
+    pub fn set_presence(&mut self, nick: &str, presence: &str) {
         self.part(nick);
         let name = Name::new(nick.to_owned(), Some(presence.to_owned()));
         if let Err(idx) = self.names.binary_search(&name) {
