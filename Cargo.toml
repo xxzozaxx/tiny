@@ -31,8 +31,9 @@ serde = "1.0.8"
 serde_derive = "1.0.8"
 serde_yaml = "0.7.1"
 take_mut = "0.2.0"
-term_input = "0.1.3"
-termbox_simple = "0.2.1"
+tempfile = "3.0.3"
+term_input = { path = "/home/omer/rust/tiny/term_input" }
+termbox_simple = { path = "/home/omer/rust/tiny/termbox" }
 time = "0.1"
 
 [dev-dependencies]

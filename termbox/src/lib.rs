@@ -34,9 +34,9 @@ const TB_OUTPUT_NORMAL    : libc::c_int = 1;
 const TB_OUTPUT_GRAYSCALE : libc::c_int = 4;
 
 extern {
-    fn tb_init() -> libc::c_int;
+    pub fn tb_init() -> libc::c_int;
     fn tb_resize();
-    fn tb_shutdown();
+    pub fn tb_shutdown();
     fn tb_width() -> libc::c_int;
     fn tb_height() -> libc::c_int;
     fn tb_clear() -> libc::c_int;
