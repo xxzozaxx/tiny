@@ -49,9 +49,9 @@ impl<'a> Iterator for SplitWhitespaceIndices<'a> {
     type Item = usize;
 
     fn next(&mut self) -> Option<usize> {
-        self.inner.next().map(|str| unsafe {
-            str.as_ptr().offset_from(self.str.as_ptr()) as usize
-        })
+        self.inner
+            .next()
+            .map(|str| unsafe { str.as_ptr().offset_from(self.str.as_ptr()) as usize })
     }
 }
 
@@ -72,10 +72,7 @@ pub struct SplitIterator<'a> {
 /// Iterate over subslices that are at most `max` long (in bytes). Splits are
 /// made on whitespace characters when possible.
 pub fn split_iterator(s: &str, max: usize) -> SplitIterator {
-    SplitIterator {
-        s: Some(s),
-        max,
-    }
+    SplitIterator { s: Some(s), max }
 }
 
 impl<'a> Iterator for SplitIterator<'a> {
@@ -87,8 +84,7 @@ impl<'a> Iterator for SplitIterator<'a> {
         }
 
         match self.s {
-            None =>
-                None,
+            None => None,
             Some(s) => {
                 if s.len() <= self.max {
                     let ret = Some(s);

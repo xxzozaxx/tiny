@@ -1,8 +1,8 @@
+use std::fmt;
+use std::fs;
 use std::fs::File;
 use std::fs::OpenOptions;
-use std::fs;
 use std::io::Write;
-use std::fmt;
 use std::path::PathBuf;
 use time;
 
@@ -106,10 +106,9 @@ impl Logger {
         });
 
         match pos {
-            Some(idx) =>
-                LogFile {
-                    fd: &mut self.fds[idx].1,
-                },
+            Some(idx) => LogFile {
+                fd: &mut self.fds[idx].1,
+            },
             None => {
                 let mut log_path = self.log_dir.clone();
                 log_path.push(format!("{}_{}.log", serv_, chan_));
@@ -144,10 +143,9 @@ impl Logger {
         });
 
         match pos {
-            Some(idx) =>
-                LogFile {
-                    fd: &mut self.fds[idx].1,
-                },
+            Some(idx) => LogFile {
+                fd: &mut self.fds[idx].1,
+            },
             None => {
                 let mut log_path = self.log_dir.clone();
                 log_path.push(format!("{}_raw.log", serv_));

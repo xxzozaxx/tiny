@@ -7,12 +7,11 @@ use std::result;
 use std::str;
 
 use config;
-use logger::LogFile;
-use logger::Logger;
-use utils;
-use wire::{Cmd, Msg, Pfx};
-use wire;
+use logger2::Logger;
 use stream::{Stream, StreamErr};
+use utils;
+use wire;
+use wire::{Cmd, Msg, Pfx};
 
 pub struct Conn<'poll> {
     serv_addr: String,
@@ -96,32 +95,29 @@ enum ConnStatus<'poll> {
 macro_rules! update_status {
     ($self:ident, $v:ident, $code:expr) => {{
         // temporarily putting `Disconnected` to `self.status`
-        let $v = ::std::mem::replace(&mut $self.status, ConnStatus::Disconnected { ticks_passed: 0 });
+        let $v = ::std::mem::replace(
+            &mut $self.status,
+            ConnStatus::Disconnected { ticks_passed: 0 },
+        );
         let new_status = $code;
         $self.status = new_status;
-    }}
+    }};
 }
 
 impl<'poll> ConnStatus<'poll> {
     fn get_stream(&self) -> Option<&Stream<'poll>> {
         use self::ConnStatus::*;
         match *self {
-            PingPong { ref stream, .. }
-            | WaitPong { ref stream, .. } =>
-                Some(stream),
-            Disconnected { .. } =>
-                None,
+            PingPong { ref stream, .. } | WaitPong { ref stream, .. } => Some(stream),
+            Disconnected { .. } => None,
         }
     }
 
     fn get_stream_mut(&mut self) -> Option<&mut Stream<'poll>> {
         use self::ConnStatus::*;
         match *self {
-            PingPong { ref mut stream, .. }
-            | WaitPong { ref mut stream, .. } =>
-                Some(stream),
-            Disconnected { .. } =>
-                None,
+            PingPong { ref mut stream, .. } | WaitPong { ref mut stream, .. } => Some(stream),
+            Disconnected { .. } => None,
         }
     }
 }
@@ -144,7 +140,13 @@ pub enum ConnEv {
     NickChange(String),
 }
 
-fn introduce<W: Write>(stream: &mut W, pass: Option<&str>, hostname: &str, realname: &str, nick: &str) {
+fn introduce<W: Write>(
+    stream: &mut W,
+    pass: Option<&str>,
+    hostname: &str,
+    realname: &str,
+    nick: &str,
+) {
     if let Some(pass) = pass {
         wire::pass(stream, pass).unwrap();
     }
@@ -192,7 +194,7 @@ impl<'poll> Conn<'poll> {
                 stream,
             },
             in_buf: vec![],
-            sasl_auth: server.sasl_auth
+            sasl_auth: server.sasl_auth,
         })
     }
 
@@ -209,8 +211,7 @@ impl<'poll> Conn<'poll> {
             self.serv_port = new_port;
         }
         match Stream::new(self.poll, &self.serv_addr, self.serv_port, self.tls) {
-            Err(err) =>
-                Err(err),
+            Err(err) => Err(err),
             Ok(mut stream) => {
                 if self.sasl_auth.is_some() {
                     wire::cap_ls(&mut stream).unwrap();
@@ -271,10 +272,12 @@ impl<'poll> Conn<'poll> {
 
 impl<'poll> Conn<'poll> {
     fn plain_sasl_authenticate(&mut self) {
-        if let (Some(stream), Some(auth)) =
-                (self.status.get_stream_mut(), self.sasl_auth.as_ref()) {
-            let msg =  format!("{}\x00{}\x00{}",
-                               auth.username, auth.username, auth.password);
+        if let (Some(stream), Some(auth)) = (self.status.get_stream_mut(), self.sasl_auth.as_ref())
+        {
+            let msg = format!(
+                "{}\x00{}\x00{}",
+                auth.username, auth.username, auth.password
+            );
             wire::authenticate(stream, &base64::encode(&msg)).unwrap();
         }
     }
@@ -292,7 +295,7 @@ impl<'poll> Conn<'poll> {
     ////////////////////////////////////////////////////////////////////////////
     // Tick handling
 
-    pub fn tick(&mut self, evs: &mut Vec<ConnEv>, mut debug_out: LogFile) {
+    pub fn tick(&mut self, evs: &mut Vec<ConnEv>, logger: &mut Logger) {
         update_status!(
             self,
             status,
@@ -305,13 +308,13 @@ impl<'poll> Conn<'poll> {
                     if ticks == PING_TICKS {
                         match self.servername {
                             None => {
-                                debug_out.write_line(format_args!(
+                                logger.debug(&format!(
                                     "{}: Can't send PING, servername unknown",
                                     self.serv_addr
                                 ));
                             }
                             Some(ref host_) => {
-                                debug_out.write_line(format_args!(
+                                logger.debug(&format!(
                                     "{}: Ping timeout, sending PING",
                                     self.serv_addr
                                 ));
@@ -365,14 +368,20 @@ impl<'poll> Conn<'poll> {
             self,
             status,
             match status {
-                ConnStatus::PingPong { stream, .. } =>
-                    ConnStatus::PingPong { ticks_passed: 0, stream },
+                ConnStatus::PingPong { stream, .. } => ConnStatus::PingPong {
+                    ticks_passed: 0,
+                    stream
+                },
                 ConnStatus::WaitPong { stream, .. } =>
-                    // no bug: we heard something from the server, whether it was a pong or not
-                    // doesn't matter that much, connectivity is fine.
-                    ConnStatus::PingPong { ticks_passed: 0, stream },
-                ConnStatus::Disconnected { .. } =>
-                    status,
+                // no bug: we heard something from the server, whether it was a pong or not
+                // doesn't matter that much, connectivity is fine.
+                {
+                    ConnStatus::PingPong {
+                        ticks_passed: 0,
+                        stream
+                    }
+                }
+                ConnStatus::Disconnected { .. } => status,
             }
         );
     }
@@ -472,12 +481,10 @@ impl<'poll> Conn<'poll> {
     pub fn write_ready(&mut self, evs: &mut Vec<ConnEv>) {
         if let Some(stream) = self.status.get_stream_mut() {
             match stream.write_ready() {
-                Err(err) =>
-                    if !err.is_would_block() {
-                        evs.push(ConnEv::Err(err));
-                    },
-                Ok(()) =>
-                    {}
+                Err(err) => if !err.is_would_block() {
+                    evs.push(ConnEv::Err(err));
+                },
+                Ok(()) => {}
             }
         }
     }
@@ -505,17 +512,19 @@ impl<'poll> Conn<'poll> {
     }
 
     fn handle_msgs(&mut self, evs: &mut Vec<ConnEv>, logger: &mut Logger) {
-        while let Some(msg) = Msg::read(
-            &mut self.in_buf,
-            Some(logger.get_raw_serv_logs(&self.serv_addr)),
-        ) {
+        while let Some(msg) = Msg::read(&mut self.in_buf) {
             self.handle_msg(msg, evs, logger);
         }
     }
 
     fn handle_msg(&mut self, msg: Msg, evs: &mut Vec<ConnEv>, logger: &mut Logger) {
         if let Msg {
-            cmd: Cmd::CAP { client: _, ref subcommand, ref params },
+            cmd:
+                Cmd::CAP {
+                    client: _,
+                    ref subcommand,
+                    ref params,
+                },
             ..
         } = msg
         {
@@ -532,13 +541,7 @@ impl<'poll> Conn<'poll> {
                 }
                 "LS" => {
                     if let Some(stream) = self.status.get_stream_mut() {
-                        introduce(
-                            stream,
-                            None,
-                            &self.hostname,
-                            &self.realname,
-                            &self.nicks[0],
-                        );
+                        introduce(stream, None, &self.hostname, &self.realname, &self.nicks[0]);
                         if params.iter().any(|cap| cap == "sasl") {
                             wire::cap_req(stream, &["sasl"]).unwrap();
                             // Will wait for CAP ... ACK from server before authentication.
@@ -566,7 +569,7 @@ impl<'poll> Conn<'poll> {
             Cmd::Reply { num: 903, .. } | Cmd::Reply { num: 904, .. } => {
                 self.end_capability_negotiation();
             }
-            _  => {}
+            _ => {}
         }
 
         if let Msg {
@@ -586,9 +589,7 @@ impl<'poll> Conn<'poll> {
         {
             if nick == self.get_nick() {
                 let usermask = format!("{}!{}", nick, user);
-                logger
-                    .get_debug_logs()
-                    .write_line(format_args!("usermask set: {}", usermask));
+                logger.debug(&format!("usermask set: {}", usermask));
                 self.usermask = Some(usermask);
             }
         }
@@ -605,9 +606,7 @@ impl<'poll> Conn<'poll> {
             // :is now your hidden host (set by services.)
             if params.len() == 3 {
                 let usermask = format!("{}!~{}@{}", self.get_nick(), self.hostname, params[1]);
-                logger
-                    .get_debug_logs()
-                    .write_line(format_args!("usermask set: {}", usermask));
+                logger.debug(&format!("usermask set: {}", usermask));
                 self.usermask = Some(usermask);
             }
         }
@@ -631,9 +630,7 @@ impl<'poll> Conn<'poll> {
             let param = &params[1];
             match wire::find_byte(param.as_bytes(), b'=') {
                 None => {
-                    logger
-                        .get_debug_logs()
-                        .write_line(format_args!("can't parse RPL_USERHOST: {}", params[1]));
+                    logger.debug(&format!("can't parse RPL_USERHOST: {}", params[1]));
                 }
                 Some(mut i) => {
                     if param.as_bytes().get(i + 1) == Some(&b'+')
@@ -643,9 +640,7 @@ impl<'poll> Conn<'poll> {
                     }
                     let usermask = (&param[i..]).trim();
                     self.usermask = Some(usermask.to_owned());
-                    logger
-                        .get_debug_logs()
-                        .write_line(format_args!("usermask set: {}", usermask));
+                    logger.debug(&format!("usermask set: {}", usermask));
                 }
             }
         }
@@ -676,16 +671,13 @@ impl<'poll> Conn<'poll> {
 
             match parse_servername(params) {
                 None => {
-                    logger.get_debug_logs().write_line(format_args!(
+                    logger.debug(&format!(
                         "{} Can't parse hostname from params: {:?}",
-                        self.serv_addr,
-                        params
+                        self.serv_addr, params
                     ));
                 }
                 Some(servername) => {
-                    logger
-                        .get_debug_logs()
-                        .write_line(format_args!("{} host: {}", self.serv_addr, servername));
+                    logger.debug(&format!("{} host: {}", self.serv_addr, servername));
                     self.servername = Some(servername);
                 }
             }
@@ -702,7 +694,9 @@ impl<'poll> Conn<'poll> {
 
         if let Msg {
             cmd: Cmd::NICK { nick: ref new_nick },
-            pfx: Some(Pfx::User { nick: ref old_nick, .. }),
+            pfx: Some(Pfx::User {
+                nick: ref old_nick, ..
+            }),
         } = msg
         {
             if old_nick == self.get_nick() {
@@ -763,9 +757,8 @@ impl<'poll> Conn<'poll> {
 fn parse_servername(params: &[String]) -> Option<String> {
     let msg = params.get(1).or_else(|| params.get(0))?;
     let slice1 = &msg[13..];
-    let servername_ends =
-        wire::find_byte(slice1.as_bytes(), b'[')
-            .or_else(|| wire::find_byte(slice1.as_bytes(), b','))?;
+    let servername_ends = wire::find_byte(slice1.as_bytes(), b'[')
+        .or_else(|| wire::find_byte(slice1.as_bytes(), b','))?;
     Some((&slice1[..servername_ends]).to_owned())
 }
 

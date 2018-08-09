@@ -24,8 +24,8 @@ extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde_yaml;
-extern crate time;
 extern crate tempfile;
+extern crate time;
 
 extern crate term_input;
 extern crate termbox_simple;
@@ -37,39 +37,42 @@ mod utils;
 
 mod cmd;
 mod cmd_line_args;
+pub mod config;
 mod conn;
-mod logger;
+// mod logger;
+mod logger2;
 mod notifier;
 mod stream;
-mod wire;
-pub mod config;
 pub mod trie;
 pub mod tui;
+mod wire;
 
+use mio::unix::EventedFd;
+use mio::unix::UnixReady;
 use mio::Events;
 use mio::Poll;
 use mio::PollOpt;
 use mio::Ready;
 use mio::Token;
-use mio::unix::EventedFd;
-use mio::unix::UnixReady;
 use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 
-use conn::{Conn, ConnErr, ConnEv};
-use cmd_line_args::{CmdLineArgs, parse_cmd_line_args};
-use logger::Logger;
-use term_input::{Event, Input};
 use cmd::{parse_cmd, ParseCmdResult};
-use tui::{MsgTarget, TUI, TUIRet, Timestamp, TabStyle, MsgSource};
+use cmd_line_args::{parse_cmd_line_args, CmdLineArgs};
+use conn::{Conn, ConnErr, ConnEv};
+use logger2::Logger;
+use term_input::{Event, Input};
+use tui::{MsgSource, MsgTarget, TUIRet, TabStyle, Timestamp, TUI};
 use wire::{Cmd, Msg, Pfx};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub fn run() {
-    let CmdLineArgs { servers: server_args, config_path } =
-        parse_cmd_line_args(std::env::args());
+    let CmdLineArgs {
+        servers: server_args,
+        config_path,
+    } = parse_cmd_line_args(std::env::args());
     let config_path = config_path.unwrap_or_else(config::get_default_config_path);
     if config_path.is_dir() {
         println!("The config path is a directory.");
@@ -101,8 +104,7 @@ pub fn run() {
                                 }
                             }
                             false
-                        })
-                        .collect()
+                        }).collect()
                 } else {
                     servers
                 };
@@ -205,7 +207,7 @@ impl<'poll> Tiny<'poll> {
                         } else {
                             match find_token_conn_idx(&tiny.conns, token) {
                                 None => {
-                                    tiny.logger.get_debug_logs().write_line(format_args!(
+                                    tiny.logger.debug(&format!(
                                         "BUG: Can't find Token in conns: {:?}",
                                         event.token()
                                     ));
@@ -221,7 +223,7 @@ impl<'poll> Tiny<'poll> {
                         for conn_idx in 0..tiny.conns.len() {
                             {
                                 let conn = &mut tiny.conns[conn_idx];
-                                conn.tick(&mut conn_evs, tiny.logger.get_debug_logs());
+                                conn.tick(&mut conn_evs, &mut tiny.logger);
                             }
                             tiny.handle_conn_evs(conn_idx, &mut conn_evs);
                         }
@@ -243,7 +245,7 @@ impl<'poll> Tiny<'poll> {
                     abort = true;
                 }
                 TUIRet::Input { msg, from } => {
-                    self.logger.get_debug_logs().write_line(format_args!(
+                    self.logger.debug(&format!(
                         "Input source: {:#?}, msg: {}",
                         from,
                         msg.iter().cloned().collect::<String>()
@@ -258,24 +260,17 @@ impl<'poll> Tiny<'poll> {
                     }
                 }
                 TUIRet::Lines { lines, from } => {
-                    self.logger.get_debug_logs().write_line(format_args!(
-                        "Input source: {:#?}, lines: {:?}",
-                        from,
-                        lines
-                    ));
+                    self.logger
+                        .debug(&format!("Input source: {:#?}, lines: {:?}", from, lines));
                     for line in lines {
                         self.send_msg(&from, &line, false);
                     }
                 }
-                TUIRet::KeyHandled =>
-                    {}
+                TUIRet::KeyHandled => {}
                 TUIRet::EventIgnored(Event::FocusGained)
-                | TUIRet::EventIgnored(Event::FocusLost) =>
-                    {}
+                | TUIRet::EventIgnored(Event::FocusLost) => {}
                 ev => {
-                    self.logger
-                        .get_debug_logs()
-                        .write_line(format_args!("Ignoring event: {:?}", ev));
+                    self.logger.debug(&format!("Ignoring event: {:?}", ev));
                 }
             }
         }
@@ -286,7 +281,7 @@ impl<'poll> Tiny<'poll> {
         match parse_cmd(msg) {
             ParseCmdResult::Ok { cmd, rest } => {
                 (cmd.cmd_fn)(rest, poll, self, src);
-            },
+            }
             // ParseCmdResult::Ambiguous(vec) => {
             //     self.tui.add_client_err_msg(
             //         &format!("Unsupported command: \"/{}\"", msg),
@@ -297,11 +292,10 @@ impl<'poll> Tiny<'poll> {
             //         &MsgTarget::CurrentTab,
             //     );
             // },
-            ParseCmdResult::Unknown =>
-                self.tui.add_client_err_msg(
-                    &format!("Unsupported command: \"/{}\"", msg),
-                    &MsgTarget::CurrentTab,
-                ),
+            ParseCmdResult::Unknown => self.tui.add_client_err_msg(
+                &format!("Unsupported command: \"/{}\"", msg),
+                &MsgTarget::CurrentTab,
+            ),
         }
     }
 
@@ -326,7 +320,8 @@ impl<'poll> Tiny<'poll> {
             match from {
                 MsgSource::Serv { ref serv_name } => {
                     // we don't split raw messages to 512-bytes long chunks
-                    if let Some(conn) = self.conns
+                    if let Some(conn) = self
+                        .conns
                         .iter_mut()
                         .find(|conn| conn.get_serv_name() == serv_name)
                     {
@@ -343,12 +338,14 @@ impl<'poll> Tiny<'poll> {
                 MsgSource::Chan {
                     ref serv_name,
                     ref chan_name,
-                } =>
-                    (
-                        MsgTarget::Chan { serv_name, chan_name },
-                        chan_name,
+                } => (
+                    MsgTarget::Chan {
                         serv_name,
-                    ),
+                        chan_name,
+                    },
+                    chan_name,
+                    serv_name,
+                ),
 
                 MsgSource::User {
                     ref serv_name,
@@ -455,8 +452,7 @@ impl<'poll> Tiny<'poll> {
                     },
                 );
                 match conn.reconnect(None) {
-                    Ok(()) =>
-                        {}
+                    Ok(()) => {}
                     Err(err) => {
                         self.tui.add_err_msg(
                             &reconnect_err_msg(&err),
@@ -493,34 +489,33 @@ impl<'poll> Tiny<'poll> {
         let conn = &self.conns[conn_idx];
         let pfx = msg.pfx;
         match msg.cmd {
-            Cmd::PRIVMSG { target, msg, is_notice } => {
+            Cmd::PRIVMSG {
+                target,
+                msg,
+                is_notice,
+            } => {
                 let pfx = match pfx {
-                    Some(pfx) =>
-                        pfx,
+                    Some(pfx) => pfx,
                     None => {
-                        self.logger
-                            .get_debug_logs()
-                            .write_line(format_args!("PRIVMSG or NOTICE without prefix \
-                                                     target: {:?} msg: {:?}", target, msg));
+                        self.logger.debug(&format!(
+                            "PRIVMSG or NOTICE without prefix \
+                             target: {:?} msg: {:?}",
+                            target, msg
+                        ));
                         return;
                     }
                 };
 
                 // sender to be shown in the UI
                 let origin = match pfx {
-                    Pfx::Server(_) =>
-                        conn.get_serv_name(),
-                    Pfx::User { ref nick, .. } =>
-                        nick,
+                    Pfx::Server(_) => conn.get_serv_name(),
+                    Pfx::User { ref nick, .. } => nick,
                 };
 
                 let (msg, is_ctcp_action) = wire::check_ctcp_action_msg(&msg);
 
                 match target {
-                    wire::MsgTarget::Chan(chan) => {
-                        self.logger
-                            .get_chan_logs(conn.get_serv_name(), &chan)
-                            .write_line(format_args!("PRIVMSG: {}", msg));
+                    wire::PrivMsgTarget::Chan(chan) => {
                         let msg_target = MsgTarget::Chan {
                             serv_name: conn.get_serv_name(),
                             chan_name: &chan,
@@ -557,12 +552,11 @@ impl<'poll> Tiny<'poll> {
                             self.tui.set_tab_style(TabStyle::NewMsg, &msg_target);
                         }
                     }
-                    wire::MsgTarget::User(target) => {
+                    wire::PrivMsgTarget::User(target) => {
                         let serv_name = conn.get_serv_name();
                         let msg_target = {
                             match pfx {
-                                Pfx::Server(_) =>
-                                    MsgTarget::Server { serv_name },
+                                Pfx::Server(_) => MsgTarget::Server { serv_name },
                                 Pfx::User { ref nick, .. } => {
                                     // show NOTICE messages in server tabs if we don't have a tab
                                     // for the sender already (see #21)
@@ -586,105 +580,90 @@ impl<'poll> Tiny<'poll> {
                 }
             }
 
-            Cmd::JOIN { chan } =>
-                match pfx {
-                    Some(Pfx::User { nick, .. }) => {
-                        let serv_name = conn.get_serv_name();
-                        self.logger
-                            .get_chan_logs(serv_name, &chan)
-                            .write_line(format_args!("JOIN: {}", nick));
-                        if nick == conn.get_nick() {
-                            self.tui.new_chan_tab(serv_name, &chan);
-                        } else {
-                            let nick = drop_nick_prefix(&nick);
-                            let ts = Some(Timestamp::now());
-                            self.tui.add_nick(
-                                nick,
-                                ts,
-                                &MsgTarget::Chan {
-                                    serv_name,
-                                    chan_name: &chan,
-                                },
-                            );
-                            // Also update the private message tab if it exists
-                            // Nothing will be shown if the user already known to be online by the
-                            // tab
-                            if self.tui.does_user_tab_exist(serv_name, nick) {
-                                self.tui.add_nick(nick, ts, &MsgTarget::User { serv_name, nick });
-                            }
-                        }
-                    }
-                    pfx => {
-                        self.logger
-                            .get_debug_logs()
-                            .write_line(format_args!("Weird JOIN message pfx {:?}", pfx));
-                    }
-                },
-
-            Cmd::PART { chan, .. } =>
-                match pfx {
-                    Some(Pfx::User { nick, .. }) =>
-                        if nick != conn.get_nick() {
-                            let serv_name = conn.get_serv_name();
-                            self.logger
-                                .get_chan_logs(serv_name, &chan)
-                                .write_line(format_args!("PART: {}", nick));
-                            self.tui.remove_nick(
-                                &nick,
-                                Some(Timestamp::now()),
-                                &MsgTarget::Chan {
-                                    serv_name,
-                                    chan_name: &chan,
-                                },
-                            );
-                        },
-                    pfx => {
-                        self.logger
-                            .get_debug_logs()
-                            .write_line(format_args!("Weird PART message pfx {:?}", pfx));
-                    }
-                },
-
-            Cmd::QUIT { .. } =>
-                match pfx {
-                    Some(Pfx::User { ref nick, .. }) => {
-                        let serv_name = conn.get_serv_name();
-                        self.tui.remove_nick(
+            Cmd::JOIN { chan } => match pfx {
+                Some(Pfx::User { nick, .. }) => {
+                    let serv_name = conn.get_serv_name();
+                    if nick == conn.get_nick() {
+                        self.tui.new_chan_tab(serv_name, &chan);
+                    } else {
+                        let nick = drop_nick_prefix(&nick);
+                        let ts = Some(Timestamp::now());
+                        self.tui.add_nick(
                             nick,
-                            Some(Timestamp::now()),
-                            &MsgTarget::AllUserTabs { serv_name, nick },
-                        );
-                    },
-                    pfx => {
-                        self.logger
-                            .get_debug_logs()
-                            .write_line(format_args!("Weird QUIT message pfx {:?}", pfx));
-                    }
-                },
-
-            Cmd::NICK { nick } =>
-                match pfx {
-                    Some(Pfx::User {
-                        nick: ref old_nick, ..
-                    }) => {
-                        let serv_name =
-                            conn.get_serv_name();
-                        self.tui.rename_nick(
-                            old_nick,
-                            &nick,
-                            Timestamp::now(),
-                            &MsgTarget::AllUserTabs {
+                            ts,
+                            &MsgTarget::Chan {
                                 serv_name,
-                                nick: old_nick,
+                                chan_name: &chan,
                             },
                         );
-                    },
-                    pfx => {
-                        self.logger
-                            .get_debug_logs()
-                            .write_line(format_args!("Weird NICK message pfx {:?}", pfx));
+                        // Also update the private message tab if it exists
+                        // Nothing will be shown if the user already known to be online by the
+                        // tab
+                        if self.tui.does_user_tab_exist(serv_name, nick) {
+                            self.tui
+                                .add_nick(nick, ts, &MsgTarget::User { serv_name, nick });
+                        }
                     }
+                }
+                pfx => {
+                    self.logger
+                        .debug(&format!("Weird JOIN message pfx {:?}", pfx));
+                }
+            },
+
+            Cmd::PART { chan, .. } => match pfx {
+                Some(Pfx::User { nick, .. }) => if nick != conn.get_nick() {
+                    let serv_name = conn.get_serv_name();
+                    self.tui.remove_nick(
+                        &nick,
+                        Some(Timestamp::now()),
+                        &MsgTarget::Chan {
+                            serv_name,
+                            chan_name: &chan,
+                        },
+                    );
                 },
+                pfx => {
+                    self.logger
+                        .debug(&format!("Weird PART message pfx {:?}", pfx));
+                }
+            },
+
+            Cmd::QUIT { .. } => match pfx {
+                Some(Pfx::User { ref nick, .. }) => {
+                    let serv_name = conn.get_serv_name();
+                    self.tui.remove_nick(
+                        nick,
+                        Some(Timestamp::now()),
+                        &MsgTarget::AllUserTabs { serv_name, nick },
+                    );
+                }
+                pfx => {
+                    self.logger
+                        .debug(&format!("Weird QUIT message pfx {:?}", pfx));
+                }
+            },
+
+            Cmd::NICK { nick } => match pfx {
+                Some(Pfx::User {
+                    nick: ref old_nick, ..
+                }) => {
+                    let serv_name = conn.get_serv_name();
+                    self.tui.rename_nick(
+                        old_nick,
+                        &nick,
+                        Timestamp::now(),
+                        &MsgTarget::AllUserTabs {
+                            serv_name,
+                            nick: old_nick,
+                        },
+                    );
+                }
+                pfx => {
+                    self.logger
+                        .debug(&format!("Weird NICK message pfx {:?}", pfx));
+                }
+            },
 
             Cmd::PING { .. } | Cmd::PONG { .. } =>
                 // ignore
@@ -692,14 +671,14 @@ impl<'poll> Tiny<'poll> {
 
             Cmd::ERROR { ref msg } => {
                 let serv_name = conn.get_serv_name();
-                self.tui.add_err_msg(
-                    msg,
-                    Timestamp::now(),
-                    &MsgTarget::AllServTabs { serv_name },
-                );
+                self.tui
+                    .add_err_msg(msg, Timestamp::now(), &MsgTarget::AllServTabs { serv_name });
             }
 
-            Cmd::TOPIC { ref chan, ref topic } => {
+            Cmd::TOPIC {
+                ref chan,
+                ref topic,
+            } => {
                 self.tui.show_topic(
                     topic,
                     Timestamp::now(),
@@ -710,16 +689,22 @@ impl<'poll> Tiny<'poll> {
                 );
             }
 
-            Cmd::CAP { client: _, ref subcommand, ref params } => {
+            Cmd::CAP {
+                client: _,
+                ref subcommand,
+                ref params,
+            } => {
                 match subcommand.as_ref() {
                     "NAK" => {
                         if params.iter().any(|cap| cap.as_str() == "sasl") {
                             let msg_target = MsgTarget::Server {
                                 serv_name: conn.get_serv_name(),
                             };
-                            self.tui.add_err_msg("Server rejected using SASL authenication capability",
-                                                 Timestamp::now(),
-                                                 &msg_target);
+                            self.tui.add_err_msg(
+                                "Server rejected using SASL authenication capability",
+                                Timestamp::now(),
+                                &msg_target,
+                            );
                         }
                     }
                     "LS" => {
@@ -727,16 +712,17 @@ impl<'poll> Tiny<'poll> {
                             let msg_target = MsgTarget::Server {
                                 serv_name: conn.get_serv_name(),
                             };
-                            self.tui.add_err_msg("Server does not support SASL authenication",
-                                                 Timestamp::now(),
-                                                 &msg_target);
+                            self.tui.add_err_msg(
+                                "Server does not support SASL authenication",
+                                Timestamp::now(),
+                                &msg_target,
+                            );
                         }
                     }
                     "ACK" => {}
                     cmd => {
                         self.logger
-                            .get_debug_logs()
-                            .write_line(format_args!("CAP subcommand {} is not handled", cmd));
+                            .debug(&format!("CAP subcommand {} is not handled", cmd));
                     }
                 };
             }
@@ -812,7 +798,8 @@ impl<'poll> Tiny<'poll> {
                     };
 
                     for nick in params[3].split_whitespace() {
-                        self.tui.add_nick(drop_nick_prefix(nick), None, &chan_target);
+                        self.tui
+                            .add_nick(drop_nick_prefix(nick), None, &chan_target);
                     }
                 }
                 // RPL_ENDOFNAMES: End of NAMES list
@@ -833,10 +820,8 @@ impl<'poll> Tiny<'poll> {
                     let nick = &params[1];
                     let msg = &params[2];
                     let serv_name = conn.get_serv_name();
-                    self.tui.add_client_msg(
-                        msg,
-                        &MsgTarget::User { serv_name, nick, },
-                    );
+                    self.tui
+                        .add_client_msg(msg, &MsgTarget::User { serv_name, nick });
                 // RPL_AWAY
                 } else if n == 301 {
                     let serv_name = conn.get_serv_name();
@@ -844,7 +829,8 @@ impl<'poll> Tiny<'poll> {
                     let msg = &params[2];
                     self.tui.add_client_msg(
                         &format!("{} is away: {}", nick, msg),
-                        &MsgTarget::User { serv_name, nick });
+                        &MsgTarget::User { serv_name, nick },
+                    );
                 } else {
                     match pfx {
                         Some(Pfx::Server(msg_serv_name)) => {
@@ -863,43 +849,39 @@ impl<'poll> Tiny<'poll> {
                         }
                         pfx => {
                             // add everything else to debug file
-                            self.logger.get_debug_logs().write_line(format_args!(
+                            self.logger.debug(&format!(
                                 "Ignoring numeric reply msg:\nPfx: {:?}, num: {:?}, args: {:?}",
-                                pfx,
-                                n,
-                                params
+                                pfx, n, params
                             ));
                         }
                     }
                 }
             }
 
-            Cmd::Other { cmd, params } => {
-                match pfx {
-                    Some(Pfx::Server(msg_serv_name)) => {
-                        let conn_serv_name = conn.get_serv_name();
-                        let msg_target = MsgTarget::Server {
-                            serv_name: conn_serv_name,
-                        };
-                        self.tui.add_privmsg(
-                            &msg_serv_name,
-                            &params.join(" "),
-                            Timestamp::now(),
-                            &msg_target,
-                            false,
-                        );
-                        self.tui.set_tab_style(TabStyle::NewMsg, &msg_target);
-                    }
-                    pfx => {
-                        self.logger.get_debug_logs().write_line(format_args!(
-                            "Ignoring msg:\nPfx: {:?}, msg: {} :{}",
-                            pfx,
-                            cmd,
-                            params.join(" "),
-                        ));
-                    }
+            Cmd::Other { cmd, params } => match pfx {
+                Some(Pfx::Server(msg_serv_name)) => {
+                    let conn_serv_name = conn.get_serv_name();
+                    let msg_target = MsgTarget::Server {
+                        serv_name: conn_serv_name,
+                    };
+                    self.tui.add_privmsg(
+                        &msg_serv_name,
+                        &params.join(" "),
+                        Timestamp::now(),
+                        &msg_target,
+                        false,
+                    );
+                    self.tui.set_tab_style(TabStyle::NewMsg, &msg_target);
                 }
-            }
+                pfx => {
+                    self.logger.debug(&format!(
+                        "Ignoring msg:\nPfx: {:?}, msg: {} :{}",
+                        pfx,
+                        cmd,
+                        params.join(" "),
+                    ));
+                }
+            },
         }
     }
 }
@@ -918,10 +900,8 @@ fn find_conn<'a, 'poll>(
     serv_name: &str,
 ) -> Option<&'a mut Conn<'poll>> {
     match find_conn_idx(conns, serv_name) {
-        None =>
-            None,
-        Some(idx) =>
-            Some(unsafe { conns.get_unchecked_mut(idx) }),
+        None => None,
+        Some(idx) => Some(unsafe { conns.get_unchecked_mut(idx) }),
     }
 }
 
@@ -936,30 +916,30 @@ fn find_conn_idx(conns: &[Conn], serv_name: &str) -> Option<usize> {
 
 fn connect_err_msg(err: &ConnErr) -> String {
     match err.cause() {
-        Some(other_err) =>
-            format!("Connection error: {} ({})", err.description(), other_err.description()),
-        None =>
-            format!("Connection error: {}", err.description()),
+        Some(other_err) => format!(
+            "Connection error: {} ({})",
+            err.description(),
+            other_err.description()
+        ),
+        None => format!("Connection error: {}", err.description()),
     }
 }
 
 fn reconnect_err_msg(err: &ConnErr) -> String {
     match err.cause() {
-        Some(other_err) =>
-            format!(
-                "Connection error: {} ({}). \
-                 Will try to reconnect in {} seconds.",
-                err.description(),
-                other_err.description(),
-                conn::RECONNECT_TICKS
-            ),
-        None =>
-            format!(
-                "Connection error: {}. \
-                 Will try to reconnect in {} seconds.",
-                err.description(),
-                conn::RECONNECT_TICKS
-            ),
+        Some(other_err) => format!(
+            "Connection error: {} ({}). \
+             Will try to reconnect in {} seconds.",
+            err.description(),
+            other_err.description(),
+            conn::RECONNECT_TICKS
+        ),
+        None => format!(
+            "Connection error: {}. \
+             Will try to reconnect in {} seconds.",
+            err.description(),
+            conn::RECONNECT_TICKS
+        ),
     }
 }
 

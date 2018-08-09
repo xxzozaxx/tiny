@@ -7,12 +7,12 @@ extern crate termbox_simple;
 extern crate time;
 extern crate tiny;
 
+use mio::unix::EventedFd;
 use mio::Events;
 use mio::Poll;
 use mio::PollOpt;
 use mio::Ready;
 use mio::Token;
-use mio::unix::EventedFd;
 use std::fs::File;
 use std::io::Read;
 
@@ -70,7 +70,7 @@ fn main() {
                 input.read_input_events(&mut ev_buffer);
                 for ev in ev_buffer.drain(0..) {
                     match tui.handle_input_event(ev) {
-                        TUIRet::Input { msg, from } =>
+                        TUIRet::Input { msg, from } => {
                             if msg == "/clear".chars().collect::<Vec<char>>() {
                                 tui.clear(&from.to_target())
                             } else if msg == "/ignore".chars().collect::<Vec<char>>() {
@@ -81,7 +81,8 @@ fn main() {
                                     Timestamp::now(),
                                     &MsgTarget::Server { serv_name: "debug" },
                                 );
-                            },
+                            }
+                        }
                         TUIRet::Abort => {
                             break 'mainloop;
                         }
@@ -99,8 +100,7 @@ fn main() {
                                 &MsgTarget::Server { serv_name: "debug" },
                             );
                         }
-                        _ =>
-                            {}
+                        _ => {}
                     }
                 }
                 tui.draw();
