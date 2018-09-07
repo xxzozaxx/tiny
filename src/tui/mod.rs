@@ -5,6 +5,7 @@ pub mod tab;
 pub mod termbox;
 pub mod text_field;
 pub mod widget;
+pub mod header;
 
 use std::str;
 
@@ -19,6 +20,7 @@ pub use tui::tab::Tab;
 pub use tui::tab::TabStyle;
 use tui::messaging::MessagingUI;
 use tui::widget::WidgetRet;
+use tui::header::Header;
 
 #[derive(Debug)]
 pub enum TUIRet {
@@ -208,6 +210,7 @@ impl TUI {
             idx,
             Tab {
                 widget: MessagingUI::new(self.width, self.height - 1, status),
+                header: Header::new(self.width),
                 src,
                 style: TabStyle::Normal,
                 switch,
@@ -666,6 +669,16 @@ impl TUI {
         self.tabs[self.active_idx]
             .widget
             .draw(&mut self.tb, &self.colors, 0, 0);
+
+        self.tabs[self.active_idx]
+            .header
+            .draw(
+                &mut self.tb,
+                &self.colors,
+                &self.tabs[self.active_idx].visible_name(),
+                &self.tabs[self.active_idx].notifier,
+                self.tabs[self.active_idx].widget.get_ignore_state()
+            );
 
         // decide whether we need to draw left/right arrows in tab bar
         let left_arr = self.draw_left_arrow();
