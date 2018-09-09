@@ -71,6 +71,7 @@ pub struct Config {
     pub defaults: Defaults,
     #[serde(default)] pub colors: Colors,
     pub log_dir: String,
+    #[serde(default)] pub statusline: bool,
 }
 
 pub fn get_default_config_path() -> PathBuf {

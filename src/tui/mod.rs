@@ -105,6 +105,8 @@ pub struct TUI {
     width: i32,
     height: i32,
     h_scroll: i32,
+
+    show_statusline: bool,
 }
 
 impl MsgSource {
@@ -150,7 +152,7 @@ impl MsgSource {
 }
 
 impl TUI {
-    pub fn new(colors: Colors) -> TUI {
+    pub fn new(colors: Colors, statusline: bool) -> TUI {
         let mut tb = Termbox::init().unwrap(); // TODO: check errors
         tb.set_output_mode(OutputMode::Output256);
         tb.set_clear_attributes(colors.clear.fg, colors.clear.bg);
@@ -166,6 +168,7 @@ impl TUI {
             width,
             height,
             h_scroll: 0,
+            show_statusline:statusline
         }
     }
 
@@ -675,6 +678,7 @@ impl TUI {
             .draw(
                 &mut self.tb,
                 &self.colors,
+                &self.show_statusline,
                 &self.tabs[self.active_idx].visible_name(),
                 &self.tabs[self.active_idx].notifier,
                 self.tabs[self.active_idx].widget.get_ignore_state()
@@ -1138,6 +1142,10 @@ impl TUI {
 
     pub fn clear(&mut self, target: &MsgTarget) {
         self.apply_to_target(target, &|tab: &mut Tab, _| tab.widget.clear());
+    }
+
+    pub fn toggle_statusline(&mut self) {
+        self.show_statusline = !self.show_statusline;
     }
 
     pub fn toggle_ignore(&mut self, target: &MsgTarget) {
