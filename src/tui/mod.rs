@@ -5,7 +5,7 @@ pub mod tab;
 pub mod termbox;
 pub mod text_field;
 pub mod widget;
-pub mod header;
+pub mod statusline;
 
 use std::str;
 
@@ -20,7 +20,7 @@ pub use tui::tab::Tab;
 pub use tui::tab::TabStyle;
 use tui::messaging::MessagingUI;
 use tui::widget::WidgetRet;
-use tui::header::Header;
+use tui::statusline::StatusLine;
 
 #[derive(Debug)]
 pub enum TUIRet {
@@ -210,7 +210,7 @@ impl TUI {
             idx,
             Tab {
                 widget: MessagingUI::new(self.width, self.height - 1, status),
-                header: Header::new(self.width),
+                statusline: StatusLine::new(self.width),
                 src,
                 style: TabStyle::Normal,
                 switch,
@@ -671,7 +671,7 @@ impl TUI {
             .draw(&mut self.tb, &self.colors, 0, 0);
 
         self.tabs[self.active_idx]
-            .header
+            .statusline
             .draw(
                 &mut self.tb,
                 &self.colors,
