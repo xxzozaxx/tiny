@@ -311,7 +311,8 @@ static STATUSLINE_CMD: Cmd = Cmd {
     name: "statusline",
     cmd_fn: statusline,
 };
-fn statusline(_: &str, _: &Poll, tiny: &mut Tiny, _src: MsgSource) {
+
+fn statusline(_: &str, _: &Poll, tiny: &mut Tiny, _: MsgSource) {
     tiny.tui.toggle_statusline();
 }
 
