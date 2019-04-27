@@ -421,7 +421,7 @@ impl TUI {
         }
     }
 
-    pub fn keypressed(&mut self, key: Key) -> TUIRet {
+    fn keypressed(&mut self, key: Key) -> TUIRet {
         match self.tabs[self.active_idx].widget.keypressed(key) {
             WidgetRet::KeyHandled => TUIRet::KeyHandled,
             WidgetRet::KeyIgnored => self.handle_keypress(key),

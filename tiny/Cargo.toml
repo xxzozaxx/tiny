@@ -1,0 +1,20 @@
+[package]
+name = "tiny"
+version = "0.4.4"
+authors = ["Ömer Sinan Ağacan <omeragacan@gmail.com>"]
+repository = "https://github.com/osa1/tiny"
+readme = "README.md"
+license = "MIT"
+keywords = ["irc"]
+categories = ["network-programming"]
+description = "A terminal IRC client"
+
+[[bin]]
+name = "tiny"
+path = "src/main.rs"
+
+[dependencies]
+iny = { version = "0.4.4", path = "../iny" }
+term_input = { version = "0.1.5", path = "../term_input" }
+termbox_simple = { version = "0.2.2", path = "../termbox" }
+time = "0.1"

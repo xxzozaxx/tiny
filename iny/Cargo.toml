@@ -1,0 +1,36 @@
+[package]
+name = "iny"
+version = "0.4.4"
+authors = ["Ömer Sinan Ağacan <omeragacan@gmail.com>"]
+repository = "https://github.com/osa1/tiny"
+readme = "README.md"
+license = "MIT"
+keywords = ["irc"]
+categories = ["network-programming"]
+description = "An IRC client library"
+
+[badges]
+travis-ci = { repository = "osa1/tiny" }
+
+[lib]
+name = "iny"
+path = "src/lib.rs"
+
+[dependencies]
+base64 = "0.6.0"
+dirs = "1.0.2"
+libc = "0.2.22"
+mio = "0.6.9"
+native-tls = "0.2.2"
+net2 = "0.2.23"
+notify-rust = "3"
+serde = { version = "1.0.8", features = ["derive"] }
+serde_yaml = "0.7.1"
+take_mut = "0.2.0"
+tempfile = "3.0.3"
+term_input = { version = "0.1.5" }
+termbox_simple = { version = "0.2.2", path = "../termbox" }
+time = "0.1"
+
+[dev-dependencies]
+quickcheck = "0.3"

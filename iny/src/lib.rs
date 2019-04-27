@@ -34,10 +34,11 @@ mod cmd_line_args;
 pub mod config;
 mod conn;
 mod logger;
-mod notifier;
+pub mod notifier;
 mod stream;
 pub mod trie;
 pub mod tui;
+pub mod ui;
 mod wire;
 
 use mio::unix::EventedFd;
