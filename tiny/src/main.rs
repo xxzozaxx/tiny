@@ -21,6 +21,7 @@ use self::tab::Tab;
 use iny::notifier::Notifier;
 use iny::ui::*;
 use messaging::MessagingUI;
+use messaging::Timestamp;
 use tab::TabStyle;
 use term_input::Event;
 use termbox_simple::Termbox;
@@ -53,44 +54,137 @@ impl UI for Tiny {
         }
     }
 
-    fn new_chan_tab(&self, serv_name: &str, chan_name: &str) {
-        unimplemented!()
+    fn new_chan_tab(&mut self, serv_name: &str, chan_name: &str) {
+        self.new_chan_tab_(serv_name, chan_name);
     }
 
-    fn close_chan_tab(&self, serv_name: &str, chan_name: &str) {
-        unimplemented!()
+    fn close_chan_tab(&mut self, serv_name: &str, chan_name: &str) {
+        if let Some(tab_idx) = self.find_chan_tab_idx(serv_name, chan_name) {
+            self.tabs.remove(tab_idx);
+            if self.active_idx == tab_idx {
+                self.select_tab(if tab_idx == 0 { 0 } else { tab_idx - 1 });
+            }
+        }
     }
 
-    fn new_user_tab(&self, serv_name: &str, nick: &str) {
-        unimplemented!()
+    fn new_user_tab(&mut self, serv_name: &str, nick: &str) {
+        self.new_user_tab_(serv_name, nick);
     }
 
-    fn close_user_tab(&self, serv_name: &str, nick: &str) {
-        unimplemented!()
+    fn close_user_tab(&mut self, serv_name: &str, nick: &str) {
+        if let Some(tab_idx) = self.find_user_tab_idx(serv_name, nick) {
+            self.tabs.remove(tab_idx);
+            if self.active_idx == tab_idx {
+                self.select_tab(if tab_idx == 0 { 0 } else { tab_idx - 1 });
+            }
+        }
     }
 
     fn handle_input_event(&self, ev: Self::InputEvent) {
         unimplemented!()
     }
 
-    fn resize(&self) {
-        unimplemented!()
+    fn resize(&mut self) {
+        self.tb.resize();
+        self.tb.clear();
+
+        self.width = self.tb.width();
+        self.height = self.tb.height();
+
+        for tab in &mut self.tabs {
+            tab.widget.resize(self.width, self.height - 1);
+        }
+        // scroll the tab bar so that currently active tab is still visible
+        let (mut tab_left, mut tab_right) = self.rendered_tabs();
+        if tab_left == tab_right {
+            // nothing to show
+            return;
+        }
+        while self.active_idx < tab_left || self.active_idx >= tab_right {
+            if self.active_idx >= tab_right {
+                // scroll right
+                self.h_scroll += self.tabs[tab_left].width() + 1;
+            } else if self.active_idx < tab_left {
+                // scroll left
+                self.h_scroll -= self.tabs[tab_left - 1].width() + 1;
+            }
+            let (tab_left_, tab_right_) = self.rendered_tabs();
+            tab_left = tab_left_;
+            tab_right = tab_right_;
+        }
+        // the selected tab is visible. scroll to the left as much as possible
+        // to make more tabs visible.
+        let mut num_visible = tab_right - tab_left;
+        loop {
+            if tab_left == 0 {
+                break;
+            }
+            // save current scroll value
+            let scroll_orig = self.h_scroll;
+            // scoll to the left
+            self.h_scroll -= self.tabs[tab_left - 1].width() + 1;
+            // get new bounds
+            let (tab_left_, tab_right_) = self.rendered_tabs();
+            // commit if these two conditions hold
+            let num_visible_ = tab_right_ - tab_left_;
+            let more_tabs_visible = num_visible_ > num_visible;
+            let selected_tab_visible = self.active_idx >= tab_left_ && self.active_idx < tab_right_;
+            if !(more_tabs_visible && selected_tab_visible) {
+                // revert scroll value and abort
+                self.h_scroll = scroll_orig;
+                break;
+            }
+            // otherwise commit
+            tab_left = tab_left_;
+            num_visible = num_visible_;
+        }
     }
 
-    fn switch(&self, string: &str) {
-        unimplemented!()
+    fn switch(&mut self, string: &str) {
+        let mut next_idx = self.active_idx;
+        for (tab_idx, tab) in self.tabs.iter().enumerate() {
+            match tab.src {
+                MsgSource::Serv { ref serv_name } => {
+                    if serv_name.contains(string) {
+                        next_idx = tab_idx;
+                        break;
+                    }
+                }
+                MsgSource::Chan { ref chan_name, .. } => {
+                    if chan_name.contains(string) {
+                        next_idx = tab_idx;
+                        break;
+                    }
+                }
+                MsgSource::User { ref nick, .. } => {
+                    if nick.contains(string) {
+                        next_idx = tab_idx;
+                        break;
+                    }
+                }
+            }
+        }
+        if next_idx != self.active_idx {
+            self.select_tab(next_idx);
+        }
     }
 
     fn add_client_err_msg(&mut self, msg: &str, target: &MsgTarget) {
-        unimplemented!()
+        self.apply_to_target(target, &|tab: &mut Tab, _| {
+            tab.widget.add_client_err_msg(msg);
+        });
     }
 
     fn add_client_notify_msg(&mut self, msg: &str, target: &MsgTarget) {
-        unimplemented!()
+        self.apply_to_target(target, &|tab: &mut Tab, _| {
+            tab.widget.add_client_notify_msg(msg);
+        });
     }
 
     fn add_client_msg(&mut self, msg: &str, target: &MsgTarget) {
-        unimplemented!()
+        self.apply_to_target(target, &|tab: &mut Tab, _| {
+            tab.widget.add_client_msg(msg);
+        });
     }
 
     fn add_privmsg(
@@ -101,7 +195,15 @@ impl UI for Tiny {
         target: &MsgTarget,
         ctcp_action: bool,
     ) {
-        unimplemented!()
+        self.apply_to_target(target, &|tab: &mut Tab, _| {
+            tab.widget
+                .add_privmsg(sender, msg, Timestamp::from(ts), false, ctcp_action);
+            let nick = tab.widget.get_nick();
+            if let Some(nick_) = nick {
+                tab.notifier
+                    .notify_privmsg(sender, msg, target, nick_, false);
+            }
+        });
     }
 
     fn add_privmsg_highlight(
@@ -112,51 +214,117 @@ impl UI for Tiny {
         target: &MsgTarget,
         ctcp_action: bool,
     ) {
-        unimplemented!()
+        self.apply_to_target(target, &|tab: &mut Tab, _| {
+            tab.widget
+                .add_privmsg(sender, msg, Timestamp::from(ts), true, ctcp_action);
+            let nick = tab.widget.get_nick();
+            if let Some(nick_) = nick {
+                tab.notifier
+                    .notify_privmsg(sender, msg, target, nick_, true);
+            }
+        });
     }
 
     fn add_msg(&mut self, msg: &str, ts: Tm, target: &MsgTarget) {
-        unimplemented!()
+        self.apply_to_target(target, &|tab: &mut Tab, _| {
+            tab.widget.add_msg(msg, Timestamp::from(ts));
+        });
     }
 
     fn add_err_msg(&mut self, msg: &str, ts: Tm, target: &MsgTarget) {
-        unimplemented!()
+        self.apply_to_target(target, &|tab: &mut Tab, _| {
+            tab.widget.add_err_msg(msg, Timestamp::from(ts));
+        });
     }
 
     fn show_topic(&mut self, title: &str, ts: Tm, target: &MsgTarget) {
-        unimplemented!()
+        self.apply_to_target(target, &|tab: &mut Tab, _| {
+            tab.widget.show_topic(title, Timestamp::from(ts));
+        });
     }
 
     fn clear_nicks(&mut self, target: &MsgTarget) {
-        unimplemented!()
+        self.apply_to_target(target, &|tab: &mut Tab, _| {
+            tab.widget.clear_nicks();
+        });
     }
 
     fn add_nick(&mut self, nick: &str, ts: Option<Tm>, target: &MsgTarget) {
-        unimplemented!()
+        self.apply_to_target(target, &|tab: &mut Tab, _| {
+            tab.widget.join(nick, ts.map(Timestamp::from));
+        });
     }
 
     fn remove_nick(&mut self, nick: &str, ts: Option<Tm>, target: &MsgTarget) {
-        unimplemented!()
+        self.apply_to_target(target, &|tab: &mut Tab, _| {
+            tab.widget.part(nick, ts.map(Timestamp::from));
+        });
     }
 
     fn rename_nick(&mut self, old_nick: &str, new_nick: &str, ts: Tm, target: &MsgTarget) {
-        unimplemented!()
+        self.apply_to_target(target, &|tab: &mut Tab, _| {
+            tab.widget.nick(old_nick, new_nick, Timestamp::from(ts));
+            tab.update_source(&|src: &mut MsgSource| {
+                if let MsgSource::User { ref mut nick, .. } = *src {
+                    nick.clear();
+                    nick.push_str(new_nick);
+                }
+            });
+        });
     }
 
     fn set_nick(&mut self, serv_name: &str, new_nick: &str) {
-        unimplemented!()
+        let target = MsgTarget::AllServTabs { serv_name };
+        self.apply_to_target(&target, &|tab: &mut Tab, _| {
+            tab.widget.set_nick(new_nick.to_owned())
+        });
     }
 
     fn clear(&mut self, target: &MsgTarget) {
-        unimplemented!()
+        self.apply_to_target(target, &|tab: &mut Tab, _| tab.widget.clear());
     }
 
     fn toggle_ignore(&mut self, target: &MsgTarget) {
-        unimplemented!()
+        if let MsgTarget::AllServTabs { serv_name } = *target {
+            let mut status_val: bool = false;
+            for tab in &self.tabs {
+                if let MsgSource::Serv {
+                    serv_name: ref serv_name_,
+                } = tab.src
+                {
+                    if serv_name == serv_name_ {
+                        status_val = tab.widget.get_ignore_state();
+                        break;
+                    }
+                }
+            }
+            self.apply_to_target(target, &|tab: &mut Tab, _| {
+                tab.widget.set_or_toggle_ignore(Some(!status_val));
+            });
+        } else {
+            self.apply_to_target(target, &|tab: &mut Tab, _| {
+                tab.widget.set_or_toggle_ignore(None);
+            });
+        }
+        // Changing tab names (adding "[i]" suffix) may make the tab currently
+        // selected overflow from the screen. Easiest (although not most
+        // efficient) way to fix this is `resize()`.
+        self.resize();
     }
 
     fn does_user_tab_exist(&self, serv_name_: &str, nick_: &str) -> bool {
-        unimplemented!()
+        for tab in &self.tabs {
+            if let MsgSource::User {
+                ref serv_name,
+                ref nick,
+            } = tab.src
+            {
+                if serv_name_ == serv_name && nick_ == nick {
+                    return true;
+                }
+            }
+        }
+        false
     }
 }
 
@@ -175,6 +343,80 @@ impl Tiny {
                 );
                 Some(tab_idx)
             }
+            Some(_) => None,
+        }
+    }
+
+    fn new_chan_tab_(&mut self, serv_name: &str, chan_name: &str) -> Option<usize> {
+        match self.find_chan_tab_idx(serv_name, chan_name) {
+            None => match self.find_last_serv_tab_idx(serv_name) {
+                None => {
+                    self.new_server_tab(serv_name);
+                    self.new_chan_tab_(serv_name, chan_name)
+                }
+                Some(serv_tab_idx) => {
+                    let mut status_val: bool = true;
+                    let mut notifier = Notifier::Mentions;
+                    for tab in &self.tabs {
+                        if let MsgSource::Serv {
+                            serv_name: ref serv_name_,
+                        } = tab.src
+                        {
+                            if serv_name == serv_name_ {
+                                status_val = tab.widget.get_ignore_state();
+                                notifier = tab.notifier;
+                                break;
+                            }
+                        }
+                    }
+                    let tab_idx = serv_tab_idx + 1;
+                    self.new_tab(
+                        tab_idx,
+                        MsgSource::Chan {
+                            serv_name: serv_name.to_owned(),
+                            chan_name: chan_name.to_owned(),
+                        },
+                        status_val,
+                        notifier,
+                    );
+                    if self.active_idx >= tab_idx {
+                        self.next_tab();
+                    }
+                    if let Some(nick) = self.tabs[serv_tab_idx].widget.get_nick().map(str::to_owned)
+                    {
+                        self.tabs[tab_idx].widget.set_nick(nick);
+                    }
+                    Some(tab_idx)
+                }
+            },
+            Some(_) => None,
+        }
+    }
+
+    fn new_user_tab_(&mut self, serv_name: &str, nick: &str) -> Option<usize> {
+        match self.find_user_tab_idx(serv_name, nick) {
+            None => match self.find_last_serv_tab_idx(serv_name) {
+                None => {
+                    self.new_server_tab(serv_name);
+                    self.new_user_tab_(serv_name, nick)
+                }
+                Some(tab_idx) => {
+                    self.new_tab(
+                        tab_idx + 1,
+                        MsgSource::User {
+                            serv_name: serv_name.to_owned(),
+                            nick: nick.to_owned(),
+                        },
+                        true,
+                        Notifier::Messages,
+                    );
+                    if let Some(nick) = self.tabs[tab_idx].widget.get_nick().map(str::to_owned) {
+                        self.tabs[tab_idx + 1].widget.set_nick(nick);
+                    }
+                    self.tabs[tab_idx + 1].widget.join(nick, None);
+                    Some(tab_idx + 1)
+                }
+            },
             Some(_) => None,
         }
     }
@@ -228,6 +470,46 @@ impl Tiny {
         for (tab_idx, tab) in self.tabs.iter().enumerate() {
             if let MsgSource::Serv { ref serv_name } = tab.src {
                 if serv_name_ == serv_name {
+                    return Some(tab_idx);
+                }
+            }
+        }
+        None
+    }
+
+    /// Index of the last tab with the given server name.
+    fn find_last_serv_tab_idx(&self, serv_name: &str) -> Option<usize> {
+        for (tab_idx, tab) in self.tabs.iter().enumerate().rev() {
+            if tab.src.serv_name() == serv_name {
+                return Some(tab_idx);
+            }
+        }
+        None
+    }
+
+    fn find_chan_tab_idx(&self, serv_name_: &str, chan_name_: &str) -> Option<usize> {
+        for (tab_idx, tab) in self.tabs.iter().enumerate() {
+            if let MsgSource::Chan {
+                ref serv_name,
+                ref chan_name,
+            } = tab.src
+            {
+                if serv_name_ == serv_name && chan_name_ == chan_name {
+                    return Some(tab_idx);
+                }
+            }
+        }
+        None
+    }
+
+    fn find_user_tab_idx(&self, serv_name_: &str, nick_: &str) -> Option<usize> {
+        for (tab_idx, tab) in self.tabs.iter().enumerate() {
+            if let MsgSource::User {
+                ref serv_name,
+                ref nick,
+            } = tab.src
+            {
+                if serv_name_ == serv_name && nick_ == nick {
                     return Some(tab_idx);
                 }
             }
@@ -356,6 +638,136 @@ impl Tiny {
         };
 
         w2 > w1
+    }
+
+    fn next_tab(&mut self) {
+        self.next_tab_();
+        self.tabs[self.active_idx].set_style(TabStyle::Normal);
+    }
+
+    fn apply_to_target<F>(&mut self, target: &MsgTarget, f: &F)
+    where
+        F: Fn(&mut Tab, bool),
+    {
+        // Creating a vector just to make borrow checker happy. Borrow checker
+        // sucks once more. Here it sucks 2x, I can't even create a Vec<&mut Tab>,
+        // I need a Vec<usize>.
+        //
+        // (I could use an array on stack but whatever)
+        let mut target_idxs: Vec<usize> = Vec::with_capacity(1);
+
+        match *target {
+            MsgTarget::Server { serv_name } => {
+                for (tab_idx, tab) in self.tabs.iter().enumerate() {
+                    if let MsgSource::Serv {
+                        serv_name: ref serv_name_,
+                    } = tab.src
+                    {
+                        if serv_name == serv_name_ {
+                            target_idxs.push(tab_idx);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            MsgTarget::Chan {
+                serv_name,
+                chan_name,
+            } => {
+                for (tab_idx, tab) in self.tabs.iter().enumerate() {
+                    if let MsgSource::Chan {
+                        serv_name: ref serv_name_,
+                        chan_name: ref chan_name_,
+                    } = tab.src
+                    {
+                        if serv_name == serv_name_ && chan_name == chan_name_ {
+                            target_idxs.push(tab_idx);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            MsgTarget::User { serv_name, nick } => {
+                for (tab_idx, tab) in self.tabs.iter().enumerate() {
+                    if let MsgSource::User {
+                        serv_name: ref serv_name_,
+                        nick: ref nick_,
+                    } = tab.src
+                    {
+                        if serv_name == serv_name_ && nick == nick_ {
+                            target_idxs.push(tab_idx);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            MsgTarget::AllServTabs { serv_name } => {
+                for (tab_idx, tab) in self.tabs.iter().enumerate() {
+                    if tab.src.serv_name() == serv_name {
+                        target_idxs.push(tab_idx);
+                    }
+                }
+            }
+
+            MsgTarget::AllUserTabs { serv_name, nick } => {
+                for (tab_idx, tab) in self.tabs.iter().enumerate() {
+                    match tab.src {
+                        MsgSource::Serv { .. } => {}
+                        MsgSource::Chan {
+                            serv_name: ref serv_name_,
+                            ..
+                        } => {
+                            if serv_name_ == serv_name && tab.widget.has_nick(nick) {
+                                target_idxs.push(tab_idx);
+                            }
+                        }
+                        MsgSource::User {
+                            serv_name: ref serv_name_,
+                            nick: ref nick_,
+                        } => {
+                            if serv_name_ == serv_name && nick_ == nick {
+                                target_idxs.push(tab_idx);
+                            }
+                        }
+                    }
+                }
+            }
+
+            MsgTarget::CurrentTab => {
+                target_idxs.push(self.active_idx);
+            }
+        }
+
+        // Create server/chan/user tab when necessary
+        if target_idxs.is_empty() {
+            if let Some(idx) = self.maybe_create_tab(target) {
+                target_idxs.push(idx);
+            }
+        }
+
+        for tab_idx in target_idxs {
+            f(&mut self.tabs[tab_idx], self.active_idx == tab_idx);
+        }
+    }
+
+    fn maybe_create_tab(&mut self, target: &MsgTarget) -> Option<usize> {
+        match *target {
+            MsgTarget::Server { serv_name } | MsgTarget::AllServTabs { serv_name } => {
+                self.new_server_tab_(serv_name)
+            }
+
+            MsgTarget::Chan {
+                serv_name,
+                chan_name,
+            } => self.new_chan_tab_(serv_name, chan_name),
+
+            MsgTarget::User { serv_name, nick } => self.new_user_tab_(serv_name, nick),
+
+            _ => None,
+        }
     }
 }
 

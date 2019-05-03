@@ -95,18 +95,18 @@ pub trait UI {
     fn new_server_tab(&mut self, serv_name: &str);
     fn close_server_tab(&mut self, serv_name: &str);
 
-    fn new_chan_tab(&self, serv_name: &str, chan_name: &str);
-    fn close_chan_tab(&self, serv_name: &str, chan_name: &str);
+    fn new_chan_tab(&mut self, serv_name: &str, chan_name: &str);
+    fn close_chan_tab(&mut self, serv_name: &str, chan_name: &str);
 
-    fn new_user_tab(&self, serv_name: &str, nick: &str);
-    fn close_user_tab(&self, serv_name: &str, nick: &str);
+    fn new_user_tab(&mut self, serv_name: &str, nick: &str);
+    fn close_user_tab(&mut self, serv_name: &str, nick: &str);
 
     fn handle_input_event(&self, ev: Self::InputEvent);
 
-    fn resize(&self);
+    fn resize(&mut self);
 
     /// Implements the `/switch <name>` command.
-    fn switch(&self, string: &str);
+    fn switch(&mut self, string: &str);
 
     /// An error message coming from the library, probably because of a command error etc.
     fn add_client_err_msg(&mut self, msg: &str, target: &MsgTarget);

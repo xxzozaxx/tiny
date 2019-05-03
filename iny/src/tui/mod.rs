@@ -19,6 +19,7 @@ use tui::messaging::MessagingUI;
 pub use tui::tab::Tab;
 pub use tui::tab::TabStyle;
 use tui::widget::WidgetRet;
+pub use ui::MsgTarget;
 
 #[derive(Debug)]
 pub enum TUIRet {
@@ -40,36 +41,6 @@ pub enum TUIRet {
         lines: Vec<String>,
         from: MsgSource,
     },
-}
-
-/// Target of a message to be shown on TUI.
-pub enum MsgTarget<'a> {
-    Server {
-        serv_name: &'a str,
-    },
-    Chan {
-        serv_name: &'a str,
-        chan_name: &'a str,
-    },
-    User {
-        serv_name: &'a str,
-        nick: &'a str,
-    },
-
-    /// Show the message in all tabs of a server.
-    AllServTabs {
-        serv_name: &'a str,
-    },
-
-    /// Show the message all server tabs that have the user. (i.e. channels,
-    /// privmsg tabs)
-    AllUserTabs {
-        serv_name: &'a str,
-        nick: &'a str,
-    },
-
-    /// Show the message in currently active tab.
-    CurrentTab,
 }
 
 /// Source of a message from the user.
