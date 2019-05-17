@@ -12,6 +12,8 @@ static ALLOC: std::alloc::System = std::alloc::System;
 extern crate quickcheck;
 
 extern crate dirs;
+extern crate futures;
+extern crate irc;
 extern crate libc;
 extern crate mio;
 extern crate native_tls;
@@ -20,8 +22,10 @@ extern crate serde;
 extern crate serde_yaml;
 extern crate tempfile;
 extern crate time;
+extern crate tokio;
 
-extern crate term_input;
+// extern crate term_input;
+extern crate term_input_futures as term_input;
 extern crate termbox_simple;
 
 extern crate take_mut;
@@ -29,7 +33,7 @@ extern crate take_mut;
 #[macro_use]
 mod utils;
 
-mod cmd;
+// mod cmd;
 mod cmd_line_args;
 pub mod config;
 mod conn;
@@ -47,17 +51,23 @@ use mio::Poll;
 use mio::PollOpt;
 use mio::Ready;
 use mio::Token;
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::time::Duration;
 use std::time::Instant;
 
-use cmd::{parse_cmd, ParseCmdResult};
+// use cmd::{parse_cmd, ParseCmdResult};
 use cmd_line_args::{parse_cmd_line_args, CmdLineArgs};
 use conn::{Conn, ConnErr, ConnEv};
 use logger::Logger;
 use term_input::{Event, Input};
-use tui::{MsgSource, MsgTarget, TUIRet, TabStyle, Timestamp, TUI};
+use tui::{MsgSource, MsgTarget, TUIHandle, TUIRet, TabStyle, Timestamp, TUI};
 use wire::{Cmd, Msg, Pfx};
+
+use futures::prelude::*;
+use irc::client::Client;
+use irc::client::PackedIrcClient;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -102,9 +112,222 @@ pub fn run() {
                 } else {
                     servers
                 };
-                Tiny::run(servers, defaults, log_dir, colors, config_path)
+
+                let tui = TUI::new(colors);
+                tokio::runtime::current_thread::run(futures::future::lazy(move || {
+                    run_async(servers, defaults, log_dir, config_path, tui)
+                }));
             }
         }
+    }
+}
+
+fn make_irc_config(mut server: config::Server) -> irc::client::data::Config {
+    // TODO: We lost SASL support after switching to the irc crate ...
+    irc::client::data::Config {
+        nickname: Some(server.nicks.remove(0)),
+        alt_nicks: Some(server.nicks),
+        nick_password: server.nickserv_ident,
+        username: Some(server.hostname), // TODO: is this correct?
+        realname: Some(server.realname),
+        server: Some(server.addr),
+        port: Some(server.port),
+        use_ssl: Some(server.tls),
+        channels: Some(server.join),
+        ..irc::client::data::Config::default()
+    }
+}
+
+// TODO This should show on the TUI
+fn report_irc_err(tui: &TUI, error: irc::error::IrcError) {
+    println!("Error: {:?}", error);
+}
+
+fn report_server_irc_err(tui: &TUIHandle, error: irc::error::IrcError) {
+    println!("Error: {:?}", error);
+}
+
+fn run_async(
+    servers: Vec<config::Server>,
+    defaults: config::Defaults,
+    log_dir: String,
+    config_path: PathBuf,
+    tui: TUI,
+) -> impl Future<Item = (), Error = ()> {
+    // Spawn a task for handling user input
+    let tui_clone = tui.clone();
+    let input = Input::new();
+    tokio::runtime::current_thread::spawn(
+        input
+            .for_each(move |ev| {
+                handle_input_event(ev, &tui_clone);
+                futures::future::ok(())
+            })
+            .map_err(|io_err| { /* TODO */ }),
+    );
+
+    // Spawn tasks for connectoins
+    for server in servers {
+        let tui_handle1 = tui.create_handle(server.addr.clone());
+        let tui_handle2 = tui_handle1.clone();
+        let irc_config = make_irc_config(server);
+
+        match irc::client::IrcClient::new_future(irc_config) {
+            Err(err) => report_irc_err(&tui, err),
+            Ok(f) => {
+                let tui_handle2 = tui_handle1.clone();
+                tokio::runtime::current_thread::spawn(
+                    f.and_then(move |irc::client::PackedIrcClient(client, future)| {
+                        // Spawn a task for incoming messages
+                        tokio::runtime::current_thread::spawn(handle_incoming_msgs(
+                            client,
+                            tui_handle1,
+                        ));
+                        // Run the connection in the current task
+                        future
+                    })
+                    .map_err(move |err| report_server_irc_err(&tui_handle2, err)),
+                );
+            }
+        }
+    }
+
+    futures::future::ok(())
+}
+
+fn handle_input_event(ev: Event, tui: &TUI) {}
+
+fn handle_incoming_msgs(
+    client: irc::client::IrcClient,
+    tui: TUIHandle,
+) -> impl Future<Item = (), Error = ()> {
+    let tui_clone = tui.clone();
+    client
+        .stream()
+        .for_each(move |msg| {
+            handle_incoming_msg(msg, client.current_nickname(), &tui);
+            futures::future::ok(())
+        })
+        .map_err(move |err| report_server_irc_err(&tui_clone, err))
+}
+
+fn handle_incoming_msg(
+    irc_msg: irc::client::prelude::Message,
+    current_nick: &str,
+    tui: &TUIHandle,
+) {
+    use irc::client::prelude::Command::*;
+    use irc::client::prelude::Prefix::*;
+
+    match irc_msg.command {
+        PRIVMSG(target, msg) => {
+            let pfx = match irc_msg.prefix {
+                None => {
+                    // TODO: log this
+                    return;
+                }
+                Some(pfx) => pfx,
+            };
+
+            let origin = match pfx {
+                ServerName(serv) => serv,
+                Nickname(nick, _username, _hostname) => nick,
+            };
+
+            // TODO:
+            // - Log
+            // - CTCP stuff?
+            // - Mentions?
+
+            if target.chars().nth(0) == Some('#') {
+                tui.add_privmsg_chan(origin, msg, Timestamp::now(), target);
+            } else {
+                tui.add_privmsg_user(origin, msg, Timestamp::now(), target);
+            }
+        }
+
+        JOIN(chanlist, _chankeys, _realname) => {
+            let nick = match irc_msg.prefix {
+                Some(Nickname(nick, _username, _hostname)) => nick,
+                _ => {
+                    // TODO: log this
+                    return;
+                }
+            };
+
+            // TODO: Log
+
+            // TODO: chanlist is actually a comma separated list, but most of the time it's
+            // just one channel so the code below works most of the time.
+
+            if nick == current_nick {
+                tui.new_chan_tab(&chanlist);
+            } else {
+                let ts = Some(Timestamp::now());
+                tui.add_nick_chan(&nick, ts, &chanlist);
+                // Also update the private message tab if it exists
+                // Nothing will be shown if the user already known to be online by the tab
+                if tui.does_user_tab_exist(&nick) {
+                    tui.add_nick_user(&nick, ts, &nick);
+                }
+            }
+        }
+
+        PART(chanlist, _comment) => {
+            // TODO: Same, chanlist is actually a list
+
+            let nick = match irc_msg.prefix {
+                Some(Nickname(nick, _username, _hostname)) => nick,
+                _ => {
+                    // TODO: log this
+                    return;
+                }
+            };
+
+            if nick != current_nick {
+                // TODO: log
+                tui.remove_nick_chan(&nick, Some(Timestamp::now()), &chanlist);
+            }
+        }
+
+        QUIT(_comment) => {
+            let nick = match irc_msg.prefix {
+                Some(Nickname(nick, _username, _hostname)) => nick,
+                _ => {
+                    // TODO: log this
+                    return;
+                }
+            };
+            tui.remove_nick_all(&nick, Some(Timestamp::now()));
+        }
+
+        NICK(new_nick) => {
+            let old_nick = match irc_msg.prefix {
+                Some(Nickname(nick, _username, _hostname)) => nick,
+                _ => {
+                    // TODO: log this
+                    return;
+                }
+            };
+            tui.rename_nick(&old_nick, &new_nick, Timestamp::now());
+        }
+
+        ERROR(error) => {
+            tui.add_err_msg(&error, Timestamp::now());
+        }
+
+        TOPIC(chan, topic) => {
+            if let Some(topic) = topic {
+                tui.show_topic(&topic, Timestamp::now(), &chan);
+            }
+        }
+
+        // TODO: ERR_NICKNAMEINUSE ???
+        // TODO: RPL_WELCOME, RPL_YOUHOST, REPL_CREATED, RPS_LUSEROP, RPL_LUSERUNKNOWN,
+        //       RPL_LUSERCHANNELS, RPL_TOPIC, RPL_NAMREPLY, RPL_ENDOFNAMES, RPL_UNAWAY,
+        //       RPL_NOWAWAY, RPL_AWAY, ERR_NOSUCHNICK ???
+        // TODO:  ???
+        _ => { /* TODO: LOG THESE */ }
     }
 }
 
@@ -121,6 +344,7 @@ pub struct Tiny<'poll> {
 
 const STDIN_TOKEN: Token = Token(libc::STDIN_FILENO as usize);
 
+/*
 impl<'poll> Tiny<'poll> {
     pub fn run(
         servers: Vec<config::Server>,
@@ -919,6 +1143,7 @@ impl<'poll> Tiny<'poll> {
         }
     }
 }
+*/
 
 fn find_token_conn_idx(conns: &[Conn], token: Token) -> Option<usize> {
     for (conn_idx, conn) in conns.iter().enumerate() {

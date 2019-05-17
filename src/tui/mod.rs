@@ -6,6 +6,8 @@ pub mod termbox;
 pub mod text_field;
 pub mod widget;
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::str;
 
 pub use self::messaging::Timestamp;
@@ -91,7 +93,7 @@ pub enum MsgSource {
 const LEFT_ARROW: char = '<';
 const RIGHT_ARROW: char = '>';
 
-pub struct TUI {
+pub struct TUIInner {
     /// Termbox instance
     tb: Termbox,
 
@@ -103,6 +105,166 @@ pub struct TUI {
     width: i32,
     height: i32,
     h_scroll: i32,
+}
+
+pub struct TUI(Rc<RefCell<TUIInner>>);
+
+impl TUI {
+    pub fn new(colors: Colors) -> TUI {
+        TUI(Rc::new(RefCell::new(TUIInner::new(colors))))
+    }
+
+    pub fn create_handle(&self, server: String) -> TUIHandle {
+        TUIHandle {
+            tui: self.clone(),
+            server: server,
+        }
+    }
+}
+
+impl Clone for TUI {
+    fn clone(&self) -> TUI {
+        TUI(self.0.clone())
+    }
+}
+
+impl Clone for TUIHandle {
+    fn clone(&self) -> TUIHandle {
+        TUIHandle {
+            tui: self.tui.clone(),
+            server: self.server.clone(),
+        }
+    }
+}
+
+/// A handle to the TUI to be shared with tokio tasks for IRC connections. Handles allows modifying
+/// tabs of the server.
+pub struct TUIHandle {
+    /// Reference to the TUI
+    tui: TUI,
+    /// This handle is used to modify tabs of this server.
+    server: String,
+}
+
+impl TUIHandle {
+    pub fn add_privmsg_chan(&self, sender: String, msg: String, ts: Timestamp, target: String) {
+        self.tui.0.borrow_mut().add_privmsg(
+            &sender,
+            &msg,
+            ts,
+            &MsgTarget::Chan {
+                serv_name: &self.server,
+                chan_name: &target,
+            },
+            false,
+        );
+    }
+
+    pub fn add_privmsg_user(&self, sender: String, msg: String, ts: Timestamp, target: String) {
+        self.tui.0.borrow_mut().add_privmsg(
+            &sender,
+            &msg,
+            ts,
+            &MsgTarget::User {
+                serv_name: &self.server,
+                nick: &target,
+            },
+            false,
+        );
+    }
+
+    pub fn new_chan_tab(&self, chan_name: &str) {
+        self.tui
+            .0
+            .borrow_mut()
+            .new_chan_tab(&self.server, chan_name);
+    }
+
+    pub fn add_nick_chan(&self, nick: &str, ts: Option<Timestamp>, chan: &str) {
+        self.tui.0.borrow_mut().apply_to_target(
+            &MsgTarget::Chan {
+                serv_name: &self.server,
+                chan_name: chan,
+            },
+            &|tab: &mut Tab, _| {
+                tab.widget.join(nick, ts);
+            },
+        );
+    }
+
+    pub fn does_user_tab_exist(&self, nick: &str) -> bool {
+        self.tui
+            .0
+            .borrow_mut()
+            .does_user_tab_exist(&self.server, nick)
+    }
+
+    pub fn add_nick_user(&self, nick: &str, ts: Option<Timestamp>, user: &str) {
+        self.tui.0.borrow_mut().apply_to_target(
+            &MsgTarget::User {
+                serv_name: &self.server,
+                nick: user,
+            },
+            &|tab: &mut Tab, _| {
+                tab.widget.join(nick, ts);
+            },
+        );
+    }
+
+    pub fn remove_nick_chan(&self, nick: &str, ts: Option<Timestamp>, chan: &str) {
+        self.tui.0.borrow_mut().remove_nick(
+            nick,
+            ts,
+            &MsgTarget::Chan {
+                serv_name: &self.server,
+                chan_name: chan,
+            },
+        );
+    }
+
+    pub fn remove_nick_all(&self, nick: &str, ts: Option<Timestamp>) {
+        self.tui.0.borrow_mut().remove_nick(
+            nick,
+            ts,
+            &MsgTarget::AllUserTabs {
+                serv_name: &self.server,
+                nick,
+            },
+        );
+    }
+
+    pub fn rename_nick(&self, old_nick: &str, new_nick: &str, ts: Timestamp) {
+        self.tui.0.borrow_mut().rename_nick(
+            old_nick,
+            new_nick,
+            ts,
+            &MsgTarget::AllUserTabs {
+                serv_name: &self.server,
+                nick: old_nick,
+            },
+        );
+    }
+
+    pub fn add_err_msg(&self, msg: &str, ts: Timestamp) {
+        self.tui.0.borrow_mut().add_err_msg(
+            msg,
+            ts,
+            &MsgTarget::AllServTabs {
+                serv_name: &self.server,
+            },
+        );
+    }
+
+    pub fn show_topic(&self, title: &str, ts: Timestamp, chan: &str) {
+        self.tui.0.borrow_mut().show_topic(
+            title,
+            ts,
+            &MsgTarget::Chan {
+                serv_name: &self.server,
+                chan_name: chan,
+            },
+        );
+    }
 }
 
 impl MsgSource {
@@ -140,8 +302,8 @@ impl MsgSource {
     }
 }
 
-impl TUI {
-    pub fn new(colors: Colors) -> TUI {
+impl TUIInner {
+    pub fn new(colors: Colors) -> TUIInner {
         let mut tb = Termbox::init().unwrap(); // TODO: check errors
         tb.set_output_mode(OutputMode::Output256);
         tb.set_clear_attributes(colors.clear.fg, colors.clear.bg);
@@ -149,7 +311,7 @@ impl TUI {
         let width = tb.width() as i32;
         let height = tb.height() as i32;
 
-        TUI {
+        TUIInner {
             tb,
             colors,
             tabs: Vec::new(),
@@ -575,7 +737,7 @@ fn arrow_style(tabs: &[Tab], colors: &Colors) -> Style {
     }
 }
 
-impl TUI {
+impl TUIInner {
     fn draw_left_arrow(&self) -> bool {
         self.h_scroll > 0
     }
