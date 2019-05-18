@@ -52,6 +52,7 @@ use mio::PollOpt;
 use mio::Ready;
 use mio::Token;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
@@ -66,6 +67,7 @@ use tui::{MsgSource, MsgTarget, TUIHandle, TUIRet, TabStyle, Timestamp, TUI};
 use wire::{Cmd, Msg, Pfx};
 
 use futures::prelude::*;
+use irc::client::ext::ClientExt;
 use irc::client::Client;
 use irc::client::PackedIrcClient;
 
@@ -147,6 +149,10 @@ fn report_server_irc_err(tui: &TUIHandle, error: irc::error::IrcError) {
     println!("Error: {:?}", error);
 }
 
+// Shared mutable cell of mapping from server names (config.addr) to IrcClients for sending
+// messages.
+type ConnMap = Rc<RefCell<HashMap<String, (irc::client::IrcClient, TUIHandle)>>>;
+
 fn run_async(
     servers: Vec<config::Server>,
     defaults: config::Defaults,
@@ -154,30 +160,41 @@ fn run_async(
     config_path: PathBuf,
     tui: TUI,
 ) -> impl Future<Item = (), Error = ()> {
+    // TODO: Remove this by passing a "send" callback to the TUI handles so that each tab will know
+    // how to send a message.
+    let conns: ConnMap = Rc::new(RefCell::new(HashMap::new()));
+
     // Spawn a task for handling user input
     let tui_clone = tui.clone();
     let input = Input::new();
+    let conns_clone = conns.clone();
     tokio::runtime::current_thread::spawn(
         input
             .for_each(move |ev| {
-                handle_input_event(ev, &tui_clone);
+                handle_input_event(ev, &tui_clone, &conns_clone);
                 futures::future::ok(())
             })
             .map_err(|io_err| { /* TODO */ }),
     );
 
-    // Spawn tasks for connectoins
+    // Spawn tasks for connections
     for server in servers {
         let tui_handle1 = tui.create_handle(server.addr.clone());
         let tui_handle2 = tui_handle1.clone();
+        let server_name = server.addr.clone();
         let irc_config = make_irc_config(server);
 
         match irc::client::IrcClient::new_future(irc_config) {
             Err(err) => report_irc_err(&tui, err),
             Ok(f) => {
                 let tui_handle2 = tui_handle1.clone();
+                let tui_handle3 = tui_handle1.clone();
+                let conns_clone = conns.clone();
                 tokio::runtime::current_thread::spawn(
                     f.and_then(move |irc::client::PackedIrcClient(client, future)| {
+                        conns_clone
+                            .borrow_mut()
+                            .insert(server_name, (client.clone(), tui_handle3));
                         // Spawn a task for incoming messages
                         tokio::runtime::current_thread::spawn(handle_incoming_msgs(
                             client,
@@ -195,7 +212,115 @@ fn run_async(
     futures::future::ok(())
 }
 
-fn handle_input_event(ev: Event, tui: &TUI) {}
+enum EvLoopRet {
+    Continue,
+    Break,
+}
+
+fn handle_input_event(ev: Event, tui: &TUI, conns: &ConnMap) -> EvLoopRet {
+    match tui.handle_input_event(ev) {
+        TUIRet::Abort => EvLoopRet::Break,
+        TUIRet::KeyHandled | TUIRet::KeyIgnored(_) | TUIRet::EventIgnored(_) => {
+            // TODO: Log
+            EvLoopRet::Continue
+        }
+        TUIRet::Input { msg, from } => {
+            // TODO: Handle commands
+            // TODO: Log
+            send_msg(
+                &tui,
+                &from,
+                &msg.into_iter().collect::<String>(),
+                conns,
+                false,
+            );
+            EvLoopRet::Continue
+        }
+        TUIRet::Lines { lines, from } => {
+            // TODO: Log
+            for line in lines {
+                send_msg(&tui, &from, &line, conns, false);
+            }
+            EvLoopRet::Continue
+        }
+    }
+}
+
+fn send_msg(tui: &TUI, from: &MsgSource, msg: &str, conns: &ConnMap, ctcp_action: bool) {
+    // msg_target: Actual PRIVMSG target to send to the server
+    // serv_name: Server name to find connection in `conns`
+    let (tui_target, msg_target, serv_name) = {
+        match from {
+            MsgSource::Serv { ref serv_name } => {
+                // TODO: Implement sending raw messages. We lost this feature during
+                // migration to the irc crate.
+                unimplemented!();
+            }
+
+            MsgSource::Chan {
+                ref serv_name,
+                ref chan_name,
+            } => (
+                MsgTarget::Chan {
+                    serv_name,
+                    chan_name,
+                },
+                chan_name,
+                serv_name,
+            ),
+
+            MsgSource::User {
+                ref serv_name,
+                ref nick,
+            } => {
+                let msg_target = if nick.eq_ignore_ascii_case("nickserv")
+                    || nick.eq_ignore_ascii_case("chanserv")
+                {
+                    MsgTarget::Server { serv_name }
+                } else {
+                    MsgTarget::User { serv_name, nick }
+                };
+                (msg_target, nick, serv_name)
+            }
+        }
+    };
+
+    let conns_ref = conns.borrow();
+    let (client, tui_handle) = conns_ref.get(serv_name.as_str()).unwrap();
+
+    let send_fn = if ctcp_action {
+        irc::client::IrcClient::send_ctcp
+    } else {
+        irc::client::IrcClient::send_privmsg
+    };
+
+    let ts = Timestamp::now();
+    send_fn(client, msg_target, msg);
+
+    // FIXME Grabage code. Remove tui_target entirely.
+    match tui_target {
+        // MsgTarget::Server { .. } => {
+        //     tui_handle.add_privmsg_serv(client.current_nickname().to_owned(), msg.to_owned(), ts);
+        // }
+        MsgTarget::Chan { chan_name, .. } => {
+            tui_handle.add_privmsg_chan(
+                client.current_nickname().to_owned(),
+                msg.to_owned(),
+                ts,
+                chan_name.to_owned(),
+            );
+        }
+        MsgTarget::User { nick, .. } => {
+            tui_handle.add_privmsg_user(
+                client.current_nickname().to_owned(),
+                msg.to_owned(),
+                ts,
+                nick.to_owned(),
+            );
+        }
+        _ => panic!(),
+    }
+}
 
 fn handle_incoming_msgs(
     client: irc::client::IrcClient,

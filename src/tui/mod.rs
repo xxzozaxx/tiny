@@ -115,10 +115,15 @@ impl TUI {
     }
 
     pub fn create_handle(&self, server: String) -> TUIHandle {
+        self.0.borrow_mut().new_server_tab(&server);
         TUIHandle {
             tui: self.clone(),
             server: server,
         }
+    }
+
+    pub fn handle_input_event(&self, ev: Event) -> TUIRet {
+        self.0.borrow_mut().handle_input_event(ev)
     }
 }
 
@@ -147,6 +152,18 @@ pub struct TUIHandle {
 }
 
 impl TUIHandle {
+    pub fn add_privmsg_serv(&self, sender: String, msg: String, ts: Timestamp) {
+        self.tui.0.borrow_mut().add_privmsg(
+            &sender,
+            &msg,
+            ts,
+            &MsgTarget::Server {
+                serv_name: &self.server,
+            },
+            false,
+        );
+    }
+
     pub fn add_privmsg_chan(&self, sender: String, msg: String, ts: Timestamp, target: String) {
         self.tui.0.borrow_mut().add_privmsg(
             &sender,
