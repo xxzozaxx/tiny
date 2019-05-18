@@ -286,6 +286,15 @@ impl TUIHandle {
             },
         );
     }
+
+    pub fn add_client_msg(&self, msg: &str) {
+        self.tui.0.borrow_mut().add_client_msg(
+            msg,
+            &MsgTarget::Server {
+                serv_name: &self.server,
+            },
+        )
+    }
 }
 
 impl MsgSource {

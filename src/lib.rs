@@ -116,7 +116,12 @@ pub fn run() {
                 };
 
                 let tui = TUI::new(colors);
+
+                let mentions = tui.create_handle("mentions".to_string());
+                mentions.add_client_msg("Any mentions to you will be listed here.");
+
                 tui.draw();
+
                 tokio::runtime::current_thread::run(futures::future::lazy(move || {
                     run_async(servers, defaults, log_dir, config_path, tui)
                 }));
