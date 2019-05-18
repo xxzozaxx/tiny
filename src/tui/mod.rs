@@ -125,6 +125,10 @@ impl TUI {
     pub fn handle_input_event(&self, ev: Event) -> TUIRet {
         self.0.borrow_mut().handle_input_event(ev)
     }
+
+    pub fn draw(&self) {
+        self.0.borrow_mut().draw()
+    }
 }
 
 impl Clone for TUI {

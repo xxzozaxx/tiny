@@ -36,7 +36,7 @@ mod utils;
 // mod cmd;
 mod cmd_line_args;
 pub mod config;
-mod conn;
+// mod conn;
 mod logger;
 mod notifier;
 mod stream;
@@ -60,7 +60,7 @@ use std::time::Instant;
 
 // use cmd::{parse_cmd, ParseCmdResult};
 use cmd_line_args::{parse_cmd_line_args, CmdLineArgs};
-use conn::{Conn, ConnErr, ConnEv};
+// use conn::{Conn, ConnErr, ConnEv};
 use logger::Logger;
 use term_input::{Event, Input};
 use tui::{MsgSource, MsgTarget, TUIHandle, TUIRet, TabStyle, Timestamp, TUI};
@@ -116,6 +116,7 @@ pub fn run() {
                 };
 
                 let tui = TUI::new(colors);
+                tui.draw();
                 tokio::runtime::current_thread::run(futures::future::lazy(move || {
                     run_async(servers, defaults, log_dir, config_path, tui)
                 }));
@@ -151,7 +152,23 @@ fn report_server_irc_err(tui: &TUIHandle, error: irc::error::IrcError) {
 
 // Shared mutable cell of mapping from server names (config.addr) to IrcClients for sending
 // messages.
-type ConnMap = Rc<RefCell<HashMap<String, (irc::client::IrcClient, TUIHandle)>>>;
+type ConnMap = Rc<RefCell<HashMap<String, Conn>>>;
+
+struct Conn {
+    client: irc::client::IrcClient,
+    tui_handle: TUIHandle,
+    close_signal: futures::sync::oneshot::Sender<()>,
+}
+
+enum InputErr {
+    IoErr(tokio::io::Error),
+    Exit,
+}
+
+enum IrcClientErr {
+    IrcErr(irc::error::IrcError),
+    ExitSignalled,
+}
 
 fn run_async(
     servers: Vec<config::Server>,
@@ -167,14 +184,33 @@ fn run_async(
     // Spawn a task for handling user input
     let tui_clone = tui.clone();
     let input = Input::new();
-    let conns_clone = conns.clone();
+    let conns_clone1 = conns.clone();
+    let conns_clone2 = conns.clone();
     tokio::runtime::current_thread::spawn(
         input
-            .for_each(move |ev| {
-                handle_input_event(ev, &tui_clone, &conns_clone);
-                futures::future::ok(())
-            })
-            .map_err(|io_err| { /* TODO */ }),
+            .map_err(InputErr::IoErr)
+            .for_each(
+                move |ev| match handle_input_event(ev, &tui_clone, &conns_clone1) {
+                    EvLoopRet::Continue => {
+                        tui_clone.draw();
+                        futures::future::ok(())
+                    }
+                    EvLoopRet::Break => futures::future::err(InputErr::Exit),
+                },
+            )
+            .map_err(move |err| {
+                // match err {
+                //     InputErr::Exit => {
+                //         for (_, conn) in conns_clone2.borrow_mut().drain() {
+                //             conn.close_signal.send(()).unwrap();
+                //         }
+                //     }
+                //     InputErr::IoErr(io_err) => { /* TODO */ }
+                // }
+                for (_, conn) in conns_clone2.borrow_mut().drain() {
+                    conn.close_signal.send(()).unwrap();
+                }
+            }),
     );
 
     // Spawn tasks for connections
@@ -191,19 +227,32 @@ fn run_async(
                 let tui_handle3 = tui_handle1.clone();
                 let conns_clone = conns.clone();
                 tokio::runtime::current_thread::spawn(
-                    f.and_then(move |irc::client::PackedIrcClient(client, future)| {
-                        conns_clone
-                            .borrow_mut()
-                            .insert(server_name, (client.clone(), tui_handle3));
-                        // Spawn a task for incoming messages
-                        tokio::runtime::current_thread::spawn(handle_incoming_msgs(
-                            client,
-                            tui_handle1,
-                        ));
-                        // Run the connection in the current task
-                        future
-                    })
-                    .map_err(move |err| report_server_irc_err(&tui_handle2, err)),
+                    f.map_err(IrcClientErr::IrcErr)
+                        .and_then(move |irc::client::PackedIrcClient(client, future)| {
+                            let (snd_close, rcv_close) = futures::sync::oneshot::channel();
+                            let conn = Conn {
+                                client: client.clone(),
+                                tui_handle: tui_handle3,
+                                close_signal: snd_close,
+                            };
+                            conns_clone.borrow_mut().insert(server_name, conn);
+                            // Spawn a task for incoming messages
+                            tokio::runtime::current_thread::spawn(handle_incoming_msgs(
+                                client,
+                                tui_handle1,
+                            ));
+                            // Run the connection in the current task
+                            future
+                                .map_err(IrcClientErr::IrcErr)
+                                .select(rcv_close.map_err(|_| IrcClientErr::ExitSignalled))
+                                .map(|(ret, _)| ret)
+                                .map_err(|(err, _select_next)| err)
+                        })
+                        .map_err(move |err| {
+                            if let IrcClientErr::IrcErr(err) = err {
+                                report_server_irc_err(&tui_handle2, err);
+                            }
+                        }),
                 );
             }
         }
@@ -286,7 +335,9 @@ fn send_msg(tui: &TUI, from: &MsgSource, msg: &str, conns: &ConnMap, ctcp_action
     };
 
     let conns_ref = conns.borrow();
-    let (client, tui_handle) = conns_ref.get(serv_name.as_str()).unwrap();
+    let Conn {
+        client, tui_handle, ..
+    } = conns_ref.get(serv_name.as_str()).unwrap();
 
     let send_fn = if ctcp_action {
         irc::client::IrcClient::send_ctcp
@@ -458,6 +509,7 @@ fn handle_incoming_msg(
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/*
 pub struct Tiny<'poll> {
     conns: Vec<Conn<'poll>>,
     defaults: config::Defaults,
@@ -466,6 +518,7 @@ pub struct Tiny<'poll> {
     logger: Logger,
     config_path: PathBuf,
 }
+*/
 
 const STDIN_TOKEN: Token = Token(libc::STDIN_FILENO as usize);
 
@@ -1270,6 +1323,7 @@ impl<'poll> Tiny<'poll> {
 }
 */
 
+/*
 fn find_token_conn_idx(conns: &[Conn], token: Token) -> Option<usize> {
     for (conn_idx, conn) in conns.iter().enumerate() {
         if conn.get_conn_tok() == Some(token) {
@@ -1326,6 +1380,7 @@ fn reconnect_err_msg(err: &ConnErr) -> String {
         ),
     }
 }
+*/
 
 /// Nicks may have prefixes, indicating it is a operator, founder, or
 /// something else.
