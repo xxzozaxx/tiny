@@ -148,11 +148,11 @@ fn make_irc_config(mut server: config::Server) -> irc::client::data::Config {
 
 // TODO This should show on the TUI
 fn report_irc_err(tui: &TUI, error: irc::error::IrcError) {
-    println!("Error: {:?}", error);
+    eprintln!("Error: {:?}", error);
 }
 
 fn report_server_irc_err(tui: &TUIHandle, error: irc::error::IrcError) {
-    println!("Error: {:?}", error);
+    eprintln!("Error: {:?}", error);
 }
 
 // Shared mutable cell of mapping from server names (config.addr) to IrcClients for sending
@@ -162,14 +162,17 @@ type ConnMap = Rc<RefCell<HashMap<String, Conn>>>;
 struct Conn {
     client: irc::client::IrcClient,
     tui_handle: TUIHandle,
-    close_signal: futures::sync::oneshot::Sender<()>,
+    close_signal1: futures::sync::oneshot::Sender<()>,
+    close_signal2: futures::sync::oneshot::Sender<()>,
 }
 
+#[derive(Debug)]
 enum InputErr {
     IoErr(tokio::io::Error),
     Exit,
 }
 
+#[derive(Debug)]
 enum IrcClientErr {
     IrcErr(irc::error::IrcError),
     ExitSignalled,
@@ -212,8 +215,10 @@ fn run_async(
                 //     }
                 //     InputErr::IoErr(io_err) => { /* TODO */ }
                 // }
+                eprintln!("Err: {:?}", err);
                 for (_, conn) in conns_clone2.borrow_mut().drain() {
-                    conn.close_signal.send(()).unwrap();
+                    conn.close_signal1.send(()).unwrap();
+                    conn.close_signal2.send(()).unwrap();
                 }
             }),
     );
@@ -234,22 +239,25 @@ fn run_async(
                 tokio::runtime::current_thread::spawn(
                     f.map_err(IrcClientErr::IrcErr)
                         .and_then(move |irc::client::PackedIrcClient(client, future)| {
-                            let (snd_close, rcv_close) = futures::sync::oneshot::channel();
+                            let (snd_close1, rcv_close1) = futures::sync::oneshot::channel();
+                            let (snd_close2, rcv_close2) = futures::sync::oneshot::channel();
                             let conn = Conn {
                                 client: client.clone(),
                                 tui_handle: tui_handle3,
-                                close_signal: snd_close,
+                                close_signal1: snd_close1,
+                                close_signal2: snd_close2,
                             };
                             conns_clone.borrow_mut().insert(server_name, conn);
                             // Spawn a task for incoming messages
                             tokio::runtime::current_thread::spawn(handle_incoming_msgs(
                                 client,
                                 tui_handle1,
+                                rcv_close2,
                             ));
                             // Run the connection in the current task
                             future
                                 .map_err(IrcClientErr::IrcErr)
-                                .select(rcv_close.map_err(|_| IrcClientErr::ExitSignalled))
+                                .select(rcv_close1.map_err(|_| IrcClientErr::ExitSignalled))
                                 .map(|(ret, _)| ret)
                                 .map_err(|(err, _select_next)| err)
                         })
@@ -381,6 +389,7 @@ fn send_msg(tui: &TUI, from: &MsgSource, msg: &str, conns: &ConnMap, ctcp_action
 fn handle_incoming_msgs(
     client: irc::client::IrcClient,
     tui: TUIHandle,
+    recv_close: futures::sync::oneshot::Receiver<()>,
 ) -> impl Future<Item = (), Error = ()> {
     let tui_clone = tui.clone();
     client
@@ -390,6 +399,9 @@ fn handle_incoming_msgs(
             futures::future::ok(())
         })
         .map_err(move |err| report_server_irc_err(&tui_clone, err))
+        .select(recv_close.map_err(|_| ()))
+        .map(|(ret, _)| ret)
+        .map_err(|(err, _select_next)| err)
 }
 
 fn handle_incoming_msg(
