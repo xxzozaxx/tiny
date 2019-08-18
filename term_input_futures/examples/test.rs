@@ -1,6 +1,6 @@
 extern crate futures;
 extern crate libc;
-extern crate term_input;
+extern crate term_input_futures;
 extern crate tokio;
 
 use std::io;
@@ -10,7 +10,7 @@ use futures::future;
 use futures::Future;
 use futures::Stream;
 
-use term_input::{Event, Input, Key};
+use term_input_futures::{Event, Input, Key};
 
 enum IterErr {
     Io(std::io::Error),

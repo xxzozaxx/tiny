@@ -1,18 +1,19 @@
-extern crate libc;
-extern crate mio;
-extern crate term_input_futures;
+#![feature(async_await, async_closure)]
 
-use mio::unix::EventedFd;
-use mio::Events;
-use mio::Poll;
-use mio::PollOpt;
-use mio::Ready;
-use mio::Token;
+extern crate libc;
+extern crate term_input_std_futures;
+extern crate tokio;
 
 use std::io;
 use std::io::Write;
+use std::task::Poll;
 
-use term_input_futures::{Event, Input, Key};
+use term_input_std_futures::{Event, Input, Key};
+
+enum IterErr {
+    Io(std::io::Error),
+    Break,
+}
 
 fn main() {
     // put the terminal in non-buffering, no-enchoing mode
@@ -40,34 +41,25 @@ fn main() {
         stdout.lock().flush().unwrap();
     }
 
-    let poll = Poll::new().unwrap();
-    poll.register(
-        &EventedFd(&libc::STDIN_FILENO),
-        Token(libc::STDIN_FILENO as usize),
-        Ready::readable(),
-        PollOpt::level(),
-    )
-    .unwrap();
-
-    let mut input = Input::new();
-    let mut evs = Vec::new();
-    let mut events = Events::with_capacity(10);
-    'mainloop: loop {
-        let _poll_ret = poll.poll(&mut events, None);
-        // println!("poll ret: {:?}", _poll_ret);
-
-        // Err: probably SIGWINCH
-        // Ok: stdin available
-        //
-        // there are events to handle either way
-        input.read_input_events(&mut evs);
-        println!("{:?}", evs);
-        for ev in evs.iter() {
-            if ev == &Event::Key(Key::Esc) {
-                break 'mainloop;
-            }
-        }
+    /* DO THE BUSINESS HERE */
+    let input = Input::new();
+    tokio::spawn(async move || {
+        // input
+        //     .map_err(IterErr::Io)
+        //     .for_each(|ev| {
+        //         println!("{:?}", ev);
+        //         if ev == Event::Key(Key::Esc) {
+        //             future::err(IterErr::Break)
+        //         } else {
+        //             future::ok(())
+        //         }
+        //     })
+        //     .map_err(|e| match e {
+        //         IterErr::Break => {}
+        //         IterErr::Io(io_err) => println!("Error: {:?}", io_err),
+        //     }),
     }
+    );
 
     // restore the old settings
     unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &old_term) };
