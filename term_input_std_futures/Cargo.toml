@@ -5,6 +5,7 @@ authors = ["Ömer Sinan Ağacan <omeragacan@gmail.com>"]
 description = "Input handling for xterm-compatible terminals"
 repository = "https://github.com/osa1/tiny"
 license = "MIT"
+edition = "2018"
 
 [dependencies]
 libc = "0.2"
@@ -12,6 +13,7 @@ mio = "0.6"
 nix = "0.7"
 tokio = "0.2.0-alpha.2"
 tokio-net = "0.2.0-alpha.2"
+tokio-executor = "0.2.0-alpha.2"
 
 [dev-dependencies]
 mio = "0.6.9"

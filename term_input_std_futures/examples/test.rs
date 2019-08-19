@@ -3,6 +3,7 @@
 extern crate libc;
 extern crate term_input_std_futures;
 extern crate tokio;
+extern crate tokio_executor;
 
 use std::io;
 use std::io::Write;
@@ -43,7 +44,8 @@ fn main() {
 
     /* DO THE BUSINESS HERE */
     let input = Input::new();
-    tokio::spawn(async move || {
+    let mut executor = tokio_executor::current_thread::CurrentThread::new();
+    executor.spawn(async {
         // input
         //     .map_err(IterErr::Io)
         //     .for_each(|ev| {
@@ -58,8 +60,8 @@ fn main() {
         //         IterErr::Break => {}
         //         IterErr::Io(io_err) => println!("Error: {:?}", io_err),
         //     }),
-    }
-    );
+    });
+    executor.run();
 
     // restore the old settings
     unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &old_term) };
