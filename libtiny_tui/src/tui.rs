@@ -17,7 +17,7 @@ use crate::tab::Tab;
 use crate::widget::WidgetRet;
 use crate::{MsgSource, MsgTarget};
 use term_input::{Arrow, Event, Key};
-use termbox_simple::{OutputMode, Termbox};
+use termbox_simple::Termbox;
 
 #[derive(Debug)]
 pub(crate) enum TUIRet {
@@ -66,8 +66,7 @@ pub(crate) struct TUI {
 impl TUI {
     pub(crate) fn new(colors: Colors) -> TUI {
         let mut tb = Termbox::init().unwrap(); // TODO: check errors
-        tb.set_output_mode(OutputMode::Output256);
-        tb.set_clear_attributes(colors.clear.fg, colors.clear.bg);
+        tb.set_clear_attributes(colors.clear.fg as u8, colors.clear.bg as u8);
 
         let width = tb.width() as i32;
         let height = tb.height() as i32;
@@ -187,8 +186,9 @@ impl TUI {
     }
 
     pub(crate) fn set_colors(&mut self, colors: Colors) {
+        // TODO as u8 part ignores styles (TB_BOLD and TB_UNDERLINE)
         self.tb
-            .set_clear_attributes(colors.clear.fg, colors.clear.bg);
+            .set_clear_attributes(colors.clear.fg as u8, colors.clear.bg as u8);
         self.colors = colors;
     }
 
@@ -389,7 +389,7 @@ impl TUI {
     fn edit_input(&mut self, str: &str) -> TUIRet {
         let tab = &mut self.tabs[self.active_idx].widget;
         let tf = tab.flush_input_field();
-        match paste_lines(tf, &str) {
+        match paste_lines(&mut self.tb, tf, &str) {
             Ok(lines) => {
                 // If there's only one line just add it to the input field, do not send it
                 if lines.len() == 1 {
@@ -513,8 +513,8 @@ impl TUI {
         self.tb.resize();
         self.tb.clear();
 
-        self.width = self.tb.width();
-        self.height = self.tb.height();
+        self.width = i32::from(self.tb.width());
+        self.height = i32::from(self.tb.height());
 
         // self.statusline_visible = statusline_visible(self.width, self.height);
         let statusline_height =
@@ -1245,13 +1245,11 @@ impl From<::std::env::VarError> for PasteError {
 ///
 /// FIXME: Ideally this function should get a `Termbox` argument and return a new `Termbox` because
 /// we shutdown the current termbox instance and initialize it again after running $EDITOR.
-fn paste_lines(tf: String, str: &str) -> Result<Vec<String>, PasteError> {
+fn paste_lines(tb: &mut Termbox, tf: String, str: &str) -> Result<Vec<String>, PasteError> {
     use std::{
         io::{Read, Seek, SeekFrom, Write},
         process::Command,
     };
-
-    use termbox_simple::*;
 
     let editor = ::std::env::var("EDITOR")?;
     let mut tmp_file = ::tempfile::NamedTempFile::new()?;
@@ -1266,13 +1264,9 @@ fn paste_lines(tf: String, str: &str) -> Result<Vec<String>, PasteError> {
     write!(tmp_file, "{}", tf)?;
     write!(tmp_file, "{}", str.replace('\r', "\n"))?;
 
-    unsafe {
-        tb_shutdown();
-    }
+    tb.suspend();
     let ret = Command::new(editor).arg(tmp_file.path()).status();
-    unsafe {
-        tb_init();
-    }
+    tb.activate();
     // No need to set color mode etc. again as they're held in static variables and won't be reset
     // after tb_shutdown()
 

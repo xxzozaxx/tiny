@@ -145,7 +145,11 @@ impl TextField {
                     }
                 }
 
-                tb.set_cursor(pos_x + self.cursor - self.scroll, pos_y);
+                let cursor_x = pos_x + self.cursor - self.scroll;
+                let cursor_y = pos_y;
+                debug_assert!(cursor_x >= 0);
+                debug_assert!(cursor_y >= 0);
+                tb.set_cursor(Some((cursor_x as u16, cursor_y as u16)));
             }
         }
     }
@@ -594,7 +598,11 @@ fn draw_line(
             colors.cursor.bg,
         );
     }
-    tb.set_cursor(pos_x + cursor - scroll, pos_y);
+    let cursor_x = pos_x + cursor - scroll;
+    let cursor_y = pos_y;
+    debug_assert!(cursor_x >= 0);
+    debug_assert!(cursor_y >= 0);
+    tb.set_cursor(Some((cursor_x as u16, cursor_y as u16)));
 }
 
 impl TextField {
