@@ -35,8 +35,8 @@ static const char *rxvt_256color_funcs[] = {
     "\033[m",
     "\033[4m",
     "\033[1m",
-    "\033[5m",
-    "\033[7m",
+    "\033[5m", // blink
+    "\033[7m", // reverse
     "\033=",
     "\033>",
     "",
@@ -50,10 +50,10 @@ static const char *eterm_funcs[] = {
     "\0337\033[?47h",
     "\033[2J\033[?47l\0338",
     "\033[?25h",
-    "\033[?25l",
-    "\033[H\033[2J",
-    "\033[m",
-    "\033[4m",
+    "\033[?25l", // hide cursor
+    "\033[H\033[2J", // clear
+    "\033[m", // sgr
+    "\033[4m", // underline
     "\033[1m",
     "\033[5m",
     "\033[7m",
@@ -67,56 +67,56 @@ static const char *eterm_funcs[] = {
 
 // screen
 static const char *screen_funcs[] = {
-    "\033[?1049h",
-    "\033[?1049l",
-    "\033[34h\033[?25h",
-    "\033[?25l",
-    "\033[H\033[J",
-    "\033[m",
-    "\033[4m",
-    "\033[1m",
-    "\033[5m",
-    "\033[7m",
-    "\033[?1h\033=",
-    "\033[?1l\033>",
-    "",
-    "",
+    "\033[?1049h", // enter
+    "\033[?1049l", // exit
+    "\033[34h\033[?25h", // show cursor
+    "\033[?25l", // hide cursor
+    "\033[H\033[J", // clear screen
+    "\033[m", // sgr 0
+    "\033[4m", // underline
+    "\033[1m", // bold
+    "\033[5m", // blink
+    "\033[7m", // reverse
+    "\033[?1h\033=", // enter keypad
+    "\033[?1l\033>", // exit keypad
+    "", // focus
+    "", // focus
     ENTER_MOUSE_SEQ,
     EXIT_MOUSE_SEQ,
 };
 
 // rxvt-unicode
 static const char *rxvt_unicode_funcs[] = {
-    "\033[?1049h",
-    "\033[r\033[?1049l",
-    "\033[?25h",
-    "\033[?25l",
-    "\033[H\033[2J",
-    "\033[m\033(B",
-    "\033[4m",
-    "\033[1m",
-    "\033[5m",
-    "\033[7m",
-    "\033=",
-    "\033>",
-    "",
-    "",
+    "\033[?1049h", // enter
+    "\033[r\033[?1049l", //exit
+    "\033[?25h", // show cursor
+    "\033[?25l", //hide cursor
+    "\033[H\033[2J", // clear screen
+    "\033[m\033(B", // sgr 0
+    "\033[4m", // underline
+    "\033[1m", // bold
+    "\033[5m", // blink
+    "\033[7m", // reverse
+    "\033=", //keypad
+    "\033>", // keypad
+    "", // focus
+    "", // focus
     ENTER_MOUSE_SEQ,
     EXIT_MOUSE_SEQ,
 };
 
 // linux
 static const char *linux_funcs[] = {
-    "",
-    "",
-    "\033[?25h\033[?0c",
-    "\033[?25l\033[?1c",
-    "\033[H\033[J",
-    "\033[0;10m",
-    "\033[4m",
-    "\033[1m",
-    "\033[5m",
-    "\033[7m",
+    "",//enter
+    "",//exit
+    "\033[?25h\033[?0c",//show cursor
+    "\033[?25l\033[?1c",//hide cursor
+    "\033[H\033[J",//clear
+    "\033[0;10m",//sgr 0
+    "\033[4m",//underline
+    "\033[1m",//bold
+    "\033[5m",//blink
+    "\033[7m",//reverse
     "",
     "",
     "",
@@ -127,18 +127,18 @@ static const char *linux_funcs[] = {
 
 // xterm
 static const char *xterm_funcs[] = {
-    "\033[?1049h",
-    "\033[?1049l",
-    "\033[?12l\033[?25h",
-    "\033[?25l",
-    "\033[H\033[2J",
-    "\033(B\033[m",
-    "\033[4m",
-    "\033[1m",
-    "\033[5m",
-    "\033[7m",
-    "\033[?1h\033=",
-    "\033[?1l\033>",
+    "\033[?1049h",//enter
+    "\033[?1049l",//exit
+    "\033[?12l\033[?25h",//show
+    "\033[?25l",//hide
+    "\033[H\033[2J",//clear
+    "\033(B\033[m",//sgr 0
+    "\033[4m",//underline
+    "\033[1m",//bold
+    "\033[5m",//blink
+    "\033[7m",//reverse
+    "\033[?1h\033=",//keypad
+    "\033[?1l\033>",//keypad
     ENABLE_FOCUS_SEQ,
     DISABLE_FOCUS_SEQ,
     ENTER_MOUSE_SEQ,
@@ -335,8 +335,7 @@ static int init_term(void) {
     // the last two entries are reserved for mouse. because the table offset is
     // not there, the two entries have to fill in manually
     for (i = 0; i < T_FUNCS_NUM-4; i++) {
-        funcs[i] = terminfo_copy_string(data,
-            str_offset + 2 * ti_funcs[i], table_offset);
+        funcs[i] = terminfo_copy_string(data, str_offset + 2 * ti_funcs[i], table_offset);
     }
 
     funcs[T_ENABLE_FOCUS_EVENTS] = ENABLE_FOCUS_SEQ;

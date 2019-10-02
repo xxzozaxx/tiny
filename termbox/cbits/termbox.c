@@ -1,3 +1,5 @@
+#include <stdint.h>
+#include <inttypes.h>
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +12,8 @@
 #include <sys/time.h>
 #include <sys/stat.h>
 #include <termios.h>
+#define _DEFAULT_SOURCE
+#define _BSD_SOURCE
 #include <unistd.h>
 #include <wchar.h>
 
@@ -84,15 +88,7 @@ int tb_init(void)
 
     struct termios tios;
     memcpy(&tios, &orig_tios, sizeof(tios));
-
-    tios.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP
-                           | INLCR | IGNCR | ICRNL | IXON);
-    tios.c_oflag &= ~OPOST;
-    tios.c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
-    tios.c_cflag &= ~(CSIZE | PARENB);
-    tios.c_cflag |= CS8;
-    tios.c_cc[VMIN] = 0;
-    tios.c_cc[VTIME] = 0;
+    cfmakeraw(&tios);
     tcsetattr(inout, TCSAFLUSH, &tios);
 
     bytebuffer_init(&output_buffer, 32 * 1024);

@@ -1,3 +1,111 @@
+use std::fs::{File, OpenOptions};
+
+#[derive(Debug)]
+pub struct TermFunctions {
+    enter_ca: Vec<u8>,
+    exit_ca: Vec<u8>,
+    show_cursor: Vec<u8>,
+    hide_cursor: Vec<u8>,
+    clear_screen: Vec<u8>,
+    sgr0: Vec<u8>,
+    underline: Vec<u8>,
+    bold: Vec<u8>,
+}
+
+pub fn get_term_fns() -> TermFunctions {
+    let terminfo_path = term::terminfo::searcher::get_dbpath_for_term("st-256color").unwrap();
+    let mut file = File::open(terminfo_path).unwrap();
+    let term::terminfo::TermInfo { mut strings, .. } = term::terminfo::parser::compiled::parse(&mut file, true).unwrap();
+
+    // These two use short names of keys
+    // let mut term_info = term::terminfo::TermInfo::from_env().unwrap();
+    // let mut term_info = term::terminfo::TermInfo::from_name("st-256color").unwrap();
+    // let mut strings = term_info.strings;
+    // println!("{:?}", term_info);
+
+    TermFunctions {
+        enter_ca: strings.remove("enter_ca_mode").unwrap(),
+        exit_ca: strings.remove("exit_ca_mode").unwrap(),
+        show_cursor: strings.remove("cursor_normal").unwrap(),
+        hide_cursor: strings.remove("cursor_invisible").unwrap(),
+        clear_screen: strings.remove("clear_screen").unwrap(),
+        sgr0: strings.remove("exit_attribute_mode").unwrap(),
+        underline: strings.remove("enter_underline_mode").unwrap(),
+        bold: strings.remove("enter_bold_mode").unwrap(),
+    }
+}
+
+use libc::{c_int, termios};
+use std::io;
+use std::mem;
+
+// copied from termion
+fn cvt<T: IsMinusOne>(t: T) -> io::Result<T> {
+    if t.is_minus_one() {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(t)
+    }
+}
+
+trait IsMinusOne {
+    fn is_minus_one(&self) -> bool;
+}
+
+macro_rules! impl_is_minus_one {
+        ($($t:ident)*) => ($(impl IsMinusOne for $t {
+            fn is_minus_one(&self) -> bool {
+                *self == -1
+            }
+        })*)
+    }
+
+impl_is_minus_one! { i8 i16 i32 i64 isize }
+
+// copied from termion
+pub fn get_terminal_attr() -> io::Result<termios> {
+    extern "C" {
+        pub fn tcgetattr(fd: c_int, termptr: *mut termios) -> c_int;
+    }
+    unsafe {
+        let mut termios = mem::zeroed();
+        cvt(tcgetattr(1, &mut termios))?;
+        Ok(termios)
+    }
+}
+
+// copied from termion
+pub fn set_terminal_attr(termios: &termios) -> io::Result<()> {
+    extern "C" {
+        pub fn tcsetattr(fd: c_int, opt: c_int, termptr: *const termios) -> c_int;
+    }
+    cvt(unsafe { tcsetattr(1, 0, termios) }).and(Ok(()))
+}
+
+// copied from termion
+pub fn raw_terminal_attr(termios: &mut termios) {
+    extern "C" {
+        pub fn cfmakeraw(termptr: *mut termios);
+    }
+    unsafe { cfmakeraw(termios) }
+}
+
+pub fn tb_init_rs()
+{
+    let mut tty = OpenOptions::new().read(true).write(true).open("/dev/tty").unwrap();
+    let term_fns = get_term_fns();
+
+    let mut ios = get_terminal_attr().unwrap();
+    let prev_ios = ios; // TODO: restore using this
+
+    raw_terminal_attr(&mut ios);
+    set_terminal_attr(&ios).unwrap();
+
+    let mut bytebuffer: Vec<u8> = Vec::with_capacity(32 * 1024);
+    bytebuffer.extend_from_slice(&term_fns.enter_ca);
+    bytebuffer.extend_from_slice(&term_fns.hide_cursor);
+}
+
 pub const TB_DEFAULT: u16 = 0x00;
 pub const TB_BLACK: u16 = 0x01;
 pub const TB_RED: u16 = 0x02;
