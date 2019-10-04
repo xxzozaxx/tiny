@@ -94,6 +94,57 @@ pub enum InitError {
     FailedToOpenTty,
 }
 
+fn goto(vec: &mut Vec<u8>, mut x: u16, mut y: u16) {
+    let x0 = x;
+    let y0 = y;
+
+    let mut buf: [u8; 32] = [0; 32];
+    buf[0] = 0x1B;
+    buf[1] = b'[';
+    
+    let mut l = 2;
+    loop {
+        buf[l] = b'0' + (y % 10) as u8;
+        l += 1;
+        y /= 10;
+        if y == 0 {
+            break;
+        }
+    }
+    for i in 0 .. (l-2) / 2 {
+        let tmp = buf[2+i];
+        buf[2+i] = buf[l - 1 - i];
+        buf[l - 1 - i] = tmp;
+    }
+
+    buf[l] = b';';
+
+    l += 1;
+
+    let l_ = l;
+
+    loop {
+        buf[l] = b'0' + (x % 10) as u8;
+        l += 1;
+        x /= 10;
+        if x == 0 {
+            break;
+        }
+    }
+    for i in 0 .. (l-l_) / 2 {
+        let tmp = buf[l_ + i];
+        buf[l_ + i] = buf[l - 1 - i];
+        buf[l - 1 - i] = tmp;
+    }
+
+    buf[l] = b'H';
+    l += 1;
+
+    assert_eq!(&buf[..l], termion::cursor::Goto(x0, y0).to_string().as_bytes());
+
+    vec.extend_from_slice(&buf[..l]);
+}
+
 impl Termbox {
     pub fn init() -> std::io::Result<Termbox> {
         // We don't use termion's into_raw_mode() because it doesn't let us do
@@ -248,21 +299,10 @@ impl Termbox {
                 if cw > 1 && (x + (cw - 1)) >= usize::from(self.front_buffer.w) {
                     // Not enough room for wide ch, send spaces
                     for i in x..usize::from(self.front_buffer.w) {
-                        write!(
-                            self.output_buffer,
-                            "{} ",
-                            termion::cursor::Goto(i as u16 + 1, y as u16 + 1)
-                        )
-                        .unwrap();
+                        goto(&mut self.output_buffer, i as u16 + 1, y as u16 + 1);
                     }
                 } else {
-                    write!(
-                        self.output_buffer,
-                        "{}{}",
-                        termion::cursor::Goto(x as u16 + 1, y as u16 + 1),
-                        back_cell.ch
-                    )
-                    .unwrap();
+                    goto(&mut self.output_buffer, x as u16+1, y as u16+1);
                     // We're going to skip `cw` cells so for wide chars fill the slop in the front
                     // buffer
                     for i in 1..cw {
@@ -279,12 +319,7 @@ impl Termbox {
         }
 
         if let Some((x, y)) = self.cursor {
-            write!(
-                self.output_buffer,
-                "{}",
-                termion::cursor::Goto(x + 1, y + 1),
-            )
-            .unwrap();
+            goto(&mut self.output_buffer, x+1, y+1);
         }
 
         self.tty.write_all(&self.output_buffer).unwrap();
@@ -312,23 +347,13 @@ impl Termbox {
             Some((x, y)) => match self.cursor {
                 None => {
                     self.cursor = Some((x, y));
-                    write!(
-                        self.output_buffer,
-                        "{}{}",
-                        termion::cursor::Goto(x + 1, y + 1),
-                        termion::cursor::Show
-                    )
-                    .unwrap();
+                    goto(&mut self.output_buffer, x+1, y+1);
+                    self.output_buffer.extend_from_slice(termion::cursor::Show.as_ref());
                 }
                 Some((x_, y_)) => {
                     if x != x_ || y != y_ {
                         self.cursor = Some((x, y));
-                        write!(
-                            self.output_buffer,
-                            "{}",
-                            termion::cursor::Goto(x + 1, y + 1)
-                        )
-                        .unwrap();
+                        goto(&mut self.output_buffer, x+1, y+1);
                     }
                 }
             },

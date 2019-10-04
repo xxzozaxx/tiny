@@ -37,3 +37,5 @@ tokio-executor = { git = "https://github.com/tokio-rs/tokio.git" }
 
 [profile.release]
 lto = true
+debug = true
+

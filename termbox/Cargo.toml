@@ -9,7 +9,7 @@ edition = "2018"
 
 [dependencies]
 libc = "0.2"
-termion = "1.5"
+termion = "1"
 unicode-width = "0.1.6"
 
 [dev-dependencies]

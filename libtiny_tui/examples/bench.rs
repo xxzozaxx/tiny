@@ -26,7 +26,7 @@ fn main() {
 
     executor.block_on(bench_task(tui, lines));
 
-    // executor.run();
+    executor.run();
 }
 
 async fn bench_task(tui: TUI, lines: Vec<String>) {
@@ -38,3 +38,19 @@ async fn bench_task(tui: TUI, lines: Vec<String>) {
         tui.draw();
     }
 }
+
+/*
+termion struct used:
+
+terminal_size
+cursor::Show
+style::Reset
+clear::All
+cursor::Goto
+cursor::Hide
+cursor::Show
+style::Reset
+style::Underline
+style::Bold
+color::AnsiValue
+*/
