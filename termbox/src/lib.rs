@@ -99,7 +99,7 @@ fn goto(vec: &mut Vec<u8>, mut x: u16, mut y: u16) {
         let x0 = x;
         let y0 = y;
 
-        let mut buf: [u8; 32] = [0; 32];
+        let mut buf: [u8; 32] = std::mem::uninitialized();
         *buf.get_unchecked_mut(0) = 0x1B;
         *buf.get_unchecked_mut(1) = b'[';
         
@@ -145,6 +145,47 @@ fn goto(vec: &mut Vec<u8>, mut x: u16, mut y: u16) {
 
         vec.extend_from_slice(&buf[..l]);
     }
+}
+
+fn char(vec: &mut Vec<u8>, c: char) {
+    let mut c = c as u32;
+
+    let first;
+    let len;
+    if c < 0x80 {
+        first = 0;
+        len = 1;
+    } else if c < 0x800 {
+        first = 0xc0;
+        len = 2;
+    } else if c < 0x10000 {
+        first = 0xe0;
+        len = 3;
+    } else if c < 0x200000 {
+        first = 0xf0;
+        len = 4;
+    } else if c < 0x4000000 {
+        first = 0xf8;
+        len = 5;
+    } else {
+        first = 0xfc;
+        len = 6;
+    }
+
+    unsafe {
+        vec.reserve(len);
+        let vlen = vec.len();
+        vec.set_len(vlen + len);
+
+        let mut i = len - 1;
+        while (i > 0) {
+            *vec.get_unchecked_mut(vlen + i) = ((c & 0x3f) | 0x80) as u8; 
+            c >>= 6;
+            i -= 1;
+        }
+        *vec.get_unchecked_mut(vlen) = (c | first) as u8;
+    }
+
 }
 
 impl Termbox {
@@ -306,7 +347,8 @@ impl Termbox {
                     }
                 } else {
                     goto(&mut self.output_buffer, x as u16+1, y as u16+1);
-                    write!(self.output_buffer, "{}", back_cell.ch);
+                    char(&mut self.output_buffer, back_cell.ch);
+                    // write!(self.output_buffer, "{}", back_cell.ch);
                     // We're going to skip `cw` cells so for wide chars fill the slop in the front
                     // buffer
                     for i in 1..cw {
