@@ -26,7 +26,7 @@ fn main() {
 
     executor.block_on(bench_task(tui, lines));
 
-    executor.run();
+    // executor.run();
 }
 
 async fn bench_task(tui: TUI, lines: Vec<String>) {

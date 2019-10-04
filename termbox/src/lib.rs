@@ -95,54 +95,56 @@ pub enum InitError {
 }
 
 fn goto(vec: &mut Vec<u8>, mut x: u16, mut y: u16) {
-    let x0 = x;
-    let y0 = y;
+    unsafe {
+        let x0 = x;
+        let y0 = y;
 
-    let mut buf: [u8; 32] = [0; 32];
-    buf[0] = 0x1B;
-    buf[1] = b'[';
-    
-    let mut l = 2;
-    loop {
-        buf[l] = b'0' + (y % 10) as u8;
-        l += 1;
-        y /= 10;
-        if y == 0 {
-            break;
+        let mut buf: [u8; 32] = [0; 32];
+        *buf.get_unchecked_mut(0) = 0x1B;
+        *buf.get_unchecked_mut(1) = b'[';
+        
+        let mut l = 2;
+        loop {
+            *buf.get_unchecked_mut(l) = b'0' + (y % 10) as u8;
+            l += 1;
+            y /= 10;
+            if y == 0 {
+                break;
+            }
         }
-    }
-    for i in 0 .. (l-2) / 2 {
-        let tmp = buf[2+i];
-        buf[2+i] = buf[l - 1 - i];
-        buf[l - 1 - i] = tmp;
-    }
-
-    buf[l] = b';';
-
-    l += 1;
-
-    let l_ = l;
-
-    loop {
-        buf[l] = b'0' + (x % 10) as u8;
-        l += 1;
-        x /= 10;
-        if x == 0 {
-            break;
+        for i in 0 .. (l-2) / 2 {
+            let tmp = *buf.get_unchecked(2+i);
+            *buf.get_unchecked_mut(2+i) = *buf.get_unchecked(l - 1 - i);
+            *buf.get_unchecked_mut(l - 1 - i) = tmp;
         }
+
+        *buf.get_unchecked_mut(l) = b';';
+
+        l += 1;
+
+        let l_ = l;
+
+        loop {
+            *buf.get_unchecked_mut(l) = b'0' + (x % 10) as u8;
+            l += 1;
+            x /= 10;
+            if x == 0 {
+                break;
+            }
+        }
+        for i in 0 .. (l-l_) / 2 {
+            let tmp = *buf.get_unchecked(l_ + i);
+            *buf.get_unchecked_mut(l_ + i) = *buf.get_unchecked(l - 1 - i);
+            *buf.get_unchecked_mut(l - 1 - i) = tmp;
+        }
+
+        *buf.get_unchecked_mut(l) = b'H';
+        l += 1;
+
+        // assert_eq!(&buf[..l], termion::cursor::Goto(x0, y0).to_string().as_bytes());
+
+        vec.extend_from_slice(&buf[..l]);
     }
-    for i in 0 .. (l-l_) / 2 {
-        let tmp = buf[l_ + i];
-        buf[l_ + i] = buf[l - 1 - i];
-        buf[l - 1 - i] = tmp;
-    }
-
-    buf[l] = b'H';
-    l += 1;
-
-    assert_eq!(&buf[..l], termion::cursor::Goto(x0, y0).to_string().as_bytes());
-
-    vec.extend_from_slice(&buf[..l]);
 }
 
 impl Termbox {
@@ -300,9 +302,11 @@ impl Termbox {
                     // Not enough room for wide ch, send spaces
                     for i in x..usize::from(self.front_buffer.w) {
                         goto(&mut self.output_buffer, i as u16 + 1, y as u16 + 1);
+                        self.output_buffer.push(b' ');
                     }
                 } else {
                     goto(&mut self.output_buffer, x as u16+1, y as u16+1);
+                    write!(self.output_buffer, "{}", back_cell.ch);
                     // We're going to skip `cw` cells so for wide chars fill the slop in the front
                     // buffer
                     for i in 1..cw {
