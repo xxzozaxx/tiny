@@ -88,6 +88,106 @@ impl CellBuf {
     }
 }
 
+#[derive(Debug)]
+pub enum InitError {
+    UnsupportedTerminal,
+    FailedToOpenTty,
+}
+
+fn goto(vec: &mut Vec<u8>, mut x: u16, mut y: u16) {
+    unsafe {
+        let x0 = x;
+        let y0 = y;
+
+        let mut buf: [u8; 32] = std::mem::uninitialized();
+        *buf.get_unchecked_mut(0) = 0x1B;
+        *buf.get_unchecked_mut(1) = b'[';
+
+        let mut l = 2;
+        loop {
+            *buf.get_unchecked_mut(l) = b'0' + (y % 10) as u8;
+            l += 1;
+            y /= 10;
+            if y == 0 {
+                break;
+            }
+        }
+        for i in 0 .. (l-2) / 2 {
+            let tmp = *buf.get_unchecked(2+i);
+            *buf.get_unchecked_mut(2+i) = *buf.get_unchecked(l - 1 - i);
+            *buf.get_unchecked_mut(l - 1 - i) = tmp;
+        }
+
+        *buf.get_unchecked_mut(l) = b';';
+
+        l += 1;
+
+        let l_ = l;
+
+        loop {
+            *buf.get_unchecked_mut(l) = b'0' + (x % 10) as u8;
+            l += 1;
+            x /= 10;
+            if x == 0 {
+                break;
+            }
+        }
+        for i in 0 .. (l-l_) / 2 {
+            let tmp = *buf.get_unchecked(l_ + i);
+            *buf.get_unchecked_mut(l_ + i) = *buf.get_unchecked(l - 1 - i);
+            *buf.get_unchecked_mut(l - 1 - i) = tmp;
+        }
+
+        *buf.get_unchecked_mut(l) = b'H';
+        l += 1;
+
+        // assert_eq!(&buf[..l], termion::cursor::Goto(x0, y0).to_string().as_bytes());
+
+        vec.extend_from_slice(&buf[..l]);
+    }
+}
+
+fn char(vec: &mut Vec<u8>, c: char) {
+    let mut c = c as u32;
+
+    let first;
+    let len;
+    if c < 0x80 {
+        first = 0;
+        len = 1;
+    } else if c < 0x800 {
+        first = 0xc0;
+        len = 2;
+    } else if c < 0x10000 {
+        first = 0xe0;
+        len = 3;
+    } else if c < 0x200000 {
+        first = 0xf0;
+        len = 4;
+    } else if c < 0x4000000 {
+        first = 0xf8;
+        len = 5;
+    } else {
+        first = 0xfc;
+        len = 6;
+    }
+
+    unsafe {
+        vec.reserve(len);
+        let vlen = vec.len();
+        vec.set_len(vlen + len);
+
+        let mut i = len - 1;
+        while (i > 0) {
+            *vec.get_unchecked_mut(vlen + i) = ((c & 0x3f) | 0x80) as u8;
+            c >>= 6;
+            i -= 1;
+        }
+        *vec.get_unchecked_mut(vlen) = (c | first) as u8;
+    }
+
+}
+
 impl Termbox {
     pub fn init() -> std::io::Result<Termbox> {
         // We don't use termion's into_raw_mode() because it doesn't let us do
@@ -242,21 +342,13 @@ impl Termbox {
                 if cw > 1 && (x + (cw - 1)) >= usize::from(self.front_buffer.w) {
                     // Not enough room for wide ch, send spaces
                     for i in x..usize::from(self.front_buffer.w) {
-                        write!(
-                            self.output_buffer,
-                            "{} ",
-                            termion::cursor::Goto(i as u16 + 1, y as u16 + 1)
-                        )
-                        .unwrap();
+                        goto(&mut self.output_buffer, i as u16 + 1, y as u16 + 1);
+                        self.output_buffer.push(b' ');
                     }
                 } else {
-                    write!(
-                        self.output_buffer,
-                        "{}{}",
-                        termion::cursor::Goto(x as u16 + 1, y as u16 + 1),
-                        back_cell.ch
-                    )
-                    .unwrap();
+                    goto(&mut self.output_buffer, x as u16+1, y as u16+1);
+                    char(&mut self.output_buffer, back_cell.ch);
+                    // write!(self.output_buffer, "{}", back_cell.ch);
                     // We're going to skip `cw` cells so for wide chars fill the slop in the front
                     // buffer
                     for i in 1..cw {
@@ -273,12 +365,7 @@ impl Termbox {
         }
 
         if let Some((x, y)) = self.cursor {
-            write!(
-                self.output_buffer,
-                "{}",
-                termion::cursor::Goto(x + 1, y + 1),
-            )
-            .unwrap();
+            goto(&mut self.output_buffer, x+1, y+1);
         }
 
         self.tty.write_all(&self.output_buffer).unwrap();
@@ -306,23 +393,13 @@ impl Termbox {
             Some((x, y)) => match self.cursor {
                 None => {
                     self.cursor = Some((x, y));
-                    write!(
-                        self.output_buffer,
-                        "{}{}",
-                        termion::cursor::Goto(x + 1, y + 1),
-                        termion::cursor::Show
-                    )
-                    .unwrap();
+                    goto(&mut self.output_buffer, x+1, y+1);
+                    self.output_buffer.extend_from_slice(termion::cursor::Show.as_ref());
                 }
                 Some((x_, y_)) => {
                     if x != x_ || y != y_ {
                         self.cursor = Some((x, y));
-                        write!(
-                            self.output_buffer,
-                            "{}",
-                            termion::cursor::Goto(x + 1, y + 1)
-                        )
-                        .unwrap();
+                        goto(&mut self.output_buffer, x+1, y+1);
                     }
                 }
             },
