@@ -24,6 +24,10 @@ pub struct Termbox {
     last_bg: u16,
     // (x, y)
     cursor: Option<(u16, u16)>,
+    // Last position of the terminal's cursor (NOT the user-visible cursor: this is where the
+    // character will appear)
+    last_x: i16,
+    last_y: i16,
     output_buffer: Vec<u8>,
 }
 
@@ -242,6 +246,8 @@ impl Termbox {
             last_fg: 0,
             last_bg: 0,
             cursor: Some((0, 0)),
+            last_x: -1,
+            last_y: -1,
             output_buffer: Vec::with_capacity(32 * 1024),
         };
 
@@ -316,6 +322,9 @@ impl Termbox {
     }
 
     pub fn present(&mut self) {
+        self.last_x = -1;
+        self.last_y = -1;
+
         if self.buffer_size_change_request {
             self.update_size();
             self.buffer_size_change_request = false;
@@ -342,12 +351,14 @@ impl Termbox {
                 if cw > 1 && (x + (cw - 1)) >= usize::from(self.front_buffer.w) {
                     // Not enough room for wide ch, send spaces
                     for i in x..usize::from(self.front_buffer.w) {
-                        goto(&mut self.output_buffer, i as u16 + 1, y as u16 + 1);
-                        self.output_buffer.push(b' ');
+                        self.send_char(i as u16, y as u16, ' ');
+                        // goto(&mut self.output_buffer, i as u16 + 1, y as u16 + 1);
+                        // self.output_buffer.push(b' ');
                     }
                 } else {
-                    goto(&mut self.output_buffer, x as u16+1, y as u16+1);
-                    char(&mut self.output_buffer, back_cell.ch);
+                    self.send_char(x as u16, y as u16, back_cell.ch);
+                    //goto(&mut self.output_buffer, x as u16+1, y as u16+1);
+                    //char(&mut self.output_buffer, back_cell.ch);
                     // write!(self.output_buffer, "{}", back_cell.ch);
                     // We're going to skip `cw` cells so for wide chars fill the slop in the front
                     // buffer
@@ -370,6 +381,15 @@ impl Termbox {
 
         self.tty.write_all(&self.output_buffer).unwrap();
         self.output_buffer.clear();
+    }
+
+    fn send_char(&mut self, x: u16, y: u16, ch: char) {
+        if (x - 1) as i16 != self.last_x || y as i16 != self.last_y {
+            goto(&mut self.output_buffer, x+1, y+1);
+        }
+        self.last_x = x as i16;
+        self.last_y = y as i16;
+        char(&mut self.output_buffer, ch);
     }
 
     pub fn hide_cursor(&mut self) {
@@ -435,6 +455,9 @@ impl Termbox {
         // TODO: Reset cursor position
         self.tty.write_all(&self.output_buffer).unwrap();
         self.output_buffer.clear();
+
+        self.last_x = -1;
+        self.last_y = -1;
     }
 
     fn send_attr(&mut self, fg: u16, bg: u16) {
