@@ -84,6 +84,7 @@ static void bytebuffer_puts(struct bytebuffer *b, const char *str) {
 }
 
 static void bytebuffer_flush(struct bytebuffer *b, int fd) {
+    total_flushed += b->len;
     write(fd, b->buf, b->len);
     bytebuffer_clear(b);
 }

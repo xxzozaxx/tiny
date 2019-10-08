@@ -12,8 +12,12 @@
 #include <termios.h>
 #include <unistd.h>
 #include <wchar.h>
+#include <inttypes.h>
 
 #include "termbox.h"
+
+// Total bytes flushed to inout
+static uint64_t total_flushed = 0;
 
 #include "bytebuffer.inl"
 #include "term.inl"
@@ -116,6 +120,8 @@ void tb_shutdown(void)
         fputs("tb_shutdown() should not be called twice.", stderr);
         abort();
     }
+
+    fprintf(stderr, "Total bytes flushed: %" PRIu64 "\n", total_flushed);
 
     bytebuffer_puts(&output_buffer, funcs[T_SHOW_CURSOR]);
     bytebuffer_puts(&output_buffer, funcs[T_SGR0]);
