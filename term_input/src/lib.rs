@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use tokio::prelude::*;
+use futures::stream::Stream;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Public types
@@ -168,7 +168,7 @@ pub struct Input {
     /// Used when reading from stdin.
     buf: Vec<u8>,
 
-    stdin: tokio::net::util::PollEvented<mio::unix::EventedFd<'static>>,
+    stdin: tokio::io::PollEvented<mio::unix::EventedFd<'static>>,
 }
 
 impl Input {
@@ -176,7 +176,7 @@ impl Input {
         Input {
             evs: VecDeque::new(),
             buf: Vec::with_capacity(100),
-            stdin: tokio::net::util::PollEvented::new(mio::unix::EventedFd(&libc::STDIN_FILENO))
+            stdin: tokio::io::PollEvented::new(mio::unix::EventedFd(&libc::STDIN_FILENO))
                 .unwrap(),
         }
     }

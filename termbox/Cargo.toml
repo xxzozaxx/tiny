@@ -13,5 +13,5 @@ termion = "1.5"
 unicode-width = "0.1"
 
 [dev-dependencies]
-mio = "0.6.9"
+mio = "0.6"
 term_input = "0.1.5"
