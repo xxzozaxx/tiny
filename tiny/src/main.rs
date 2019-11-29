@@ -77,10 +77,11 @@ fn run(
 
     // One task for each client to handle IRC events
     // One task for TUI events
-    let mut executor = tokio::runtime::current_thread::Runtime::new().unwrap();
+    let mut executor = tokio::runtime::Builder::new().basic_scheduler().build().unwrap();
+    let mut scheduler = tokio::task::LocalSet::new();
 
     // Create TUI task
-    let (tui, rcv_tui_ev) = TUI::run(colors, &mut executor);
+    let (tui, rcv_tui_ev) = TUI::run(colors, &mut scheduler);
 
     // Init "mentions" tab. This needs to happen before initializing the logger as otherwise we
     // won't have a tab to show errors when something goes wrong during initialization.
@@ -144,20 +145,18 @@ fn run(
             }),
         };
 
-        let (client, rcv_conn_ev) = Client::new(server_info, Some(&mut executor));
+        let (client, rcv_conn_ev) = Client::new(server_info, Some(&mut scheduler));
         // TODO: Somehow it's quite hard to expose this objekt call with a different name and less
         // polymorphic type in libtiny_ui ...
         let tui_clone = libtiny_ui::clone_box(&*tui);
         let client_clone = client.clone();
 
         // Spawn a task to handle connection events
-        executor.spawn(conn::task(rcv_conn_ev, tui_clone, client_clone));
+        scheduler.spawn_local(conn::task(rcv_conn_ev, tui_clone, client_clone));
 
         clients.push(client);
     }
 
     // Spawn a task to handle TUI events
-    executor.spawn(ui::task(config_path, defaults, tui, clients, rcv_tui_ev));
-
-    executor.run().unwrap(); // unwraps RunError
+    scheduler.block_on(&mut executor, ui::task(config_path, defaults, tui, clients, rcv_tui_ev));
 }

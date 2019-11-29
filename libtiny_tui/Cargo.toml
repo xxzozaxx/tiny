@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 env_logger = "0.7"
-futures = "0.3.1"
+futures = "0.3"
 libtiny_ui = { path = "../libtiny_ui" }
 log = "0.4"
 notify-rust = "3"
@@ -15,7 +15,7 @@ tempfile = "3.0.3"
 term_input = { path = "../term_input" }
 termbox_simple = { path = "../termbox" }
 time = "0.1"
-tokio = { version = "0.2.1", features = ["full"] }
+tokio = { version = "0.2.2", features = ["full"] }
 
 [dev-dependencies]
 mio = "0.6"

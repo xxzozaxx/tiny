@@ -24,14 +24,13 @@ pub use libtiny_ui::*;
 
 use futures::select;
 use futures::stream::StreamExt;
-use futures::future::FutureExt;
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 use term_input::Input;
 use time::Tm;
-use tokio::runtime::Runtime;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::mpsc;
+use tokio::task::LocalSet;
 
 #[macro_use]
 extern crate log;
@@ -42,7 +41,7 @@ pub struct TUI {
 }
 
 impl TUI {
-    pub fn run(colors: Colors, runtime: &mut Runtime) -> (TUI, mpsc::Receiver<Event>) {
+    pub fn run(colors: Colors, runtime: &LocalSet) -> (TUI, mpsc::Receiver<Event>) {
         let tui = Rc::new(RefCell::new(tui::TUI::new(colors)));
         let inner = Rc::downgrade(&tui);
 
@@ -51,12 +50,11 @@ impl TUI {
         // For SIGWINCH handler
         let (snd_abort, rcv_abort) = mpsc::channel::<()>(1);
 
-        // FIXME These won't work, we need to enter a LocalSet first
         // Spawn SIGWINCH handler
-        tokio::task::spawn_local(sigwinch_handler(inner.clone(), rcv_abort));
+        runtime.spawn_local(sigwinch_handler(inner.clone(), rcv_abort));
 
         // Spawn input handler task
-        tokio::task::spawn_local(input_handler(tui, snd_ev, snd_abort));
+        runtime.spawn_local(input_handler(tui, snd_ev, snd_abort));
 
         (TUI { inner }, rcv_ev)
     }

@@ -3,7 +3,7 @@
 
 //! IRC event handling
 
-use futures_util::stream::StreamExt;
+use futures::stream::StreamExt;
 use libtiny_client::Client;
 use libtiny_ui::{MsgTarget, TabStyle, UI};
 use libtiny_wire as wire;
@@ -66,6 +66,15 @@ fn handle_conn_ev(ui: &dyn UI, client: &Client, ev: libtiny_client::Event) -> bo
         IoErr(err) => {
             ui.add_err_msg(
                 &format!("Connection error: {}", err.description()),
+                time::now(),
+                &MsgTarget::AllServTabs {
+                    serv: client.get_serv_name(),
+                },
+            );
+        }
+        DnsError(err) => {
+            ui.add_err_msg(
+                &format!("Error in DNS thread: {}", err.description()),
                 time::now(),
                 &MsgTarget::AllServTabs {
                     serv: client.get_serv_name(),
